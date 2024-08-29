@@ -2,6 +2,7 @@
 """Utils for omniconfig."""
 import types
 import typing
+from dataclasses import InitVar
 from enum import Enum
 
 import toml
@@ -33,6 +34,8 @@ def parse_field_type(tp: typing.Any) -> tuple[typing.Any, bool]:
     Returns:
         tuple[typing.Any, bool]: The parsed type and whether it is optional.
     """
+    if isinstance(tp, InitVar):
+        tp = tp.type
     if hasattr(tp, "__origin__"):
         if tp.__origin__ is typing.Union:
             ntp = tuple(arg for arg in tp.__args__ if arg is not type(None))
