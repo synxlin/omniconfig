@@ -35,6 +35,7 @@ class ConfigParser:
     FILE_EXTS: tuple[str] = ("yaml", "yml", "toml")
 
     _cfgs: dict[str, tuple[ConfigType[Any], Arguments, str]]
+    _extras: set[str]
     _parser: argparse.ArgumentParser
 
     def __init__(
@@ -54,6 +55,7 @@ class ConfigParser:
     ) -> None:
         """Initialize a parser for config classes."""
         self._cfgs = {}
+        self._extras = set()
         self._parser = argparse.ArgumentParser(
             prog=prog,
             usage=usage,
@@ -93,6 +95,15 @@ class ConfigParser:
         args.add_to_parser(self._parser, suppress=True)
         self._cfgs[scope] = (cfg, args, prefix)
 
+    def add_extra_argument(self, *args, **kwargs) -> None:
+        """Add an extra argument to the parser.
+
+        Args:
+            *args: Arguments to add.
+            **kwargs: Keyword arguments to add.
+        """
+        self._extras.add(self._parser.add_argument(*args, **kwargs).dest)
+
     @staticmethod
     def _load(path: str) -> dict[str, Any]:
         if path.endswith(".toml"):
@@ -104,8 +115,14 @@ class ConfigParser:
 
     def _parse_args(  # noqa: C901
         self, args=None, namespace=None, **defaults
-    ) -> tuple[dict[str, Any] | Any, dict[str, Any], list[str]]:
+    ) -> tuple[dict[str, Any] | Any, dict[str, Any], argparse.Namespace, list[str]]:
         parsed_args, unknown_args = self._parser.parse_known_args(args, namespace)
+        # region move extra arguments in parsed_args to a separate namespace
+        extra_args = argparse.Namespace()
+        for extra in self._extras:
+            setattr(extra_args, extra, getattr(parsed_args, extra))
+            delattr(parsed_args, extra)
+        # endregion
         import_paths: list[str] = []
         config_paths: list[str] = []
         for path in getattr(parsed_args, self.FILE_SCOPE, []):
@@ -170,9 +187,11 @@ class ConfigParser:
             parsed = next(iter(parsed.values()))
         assert self.FILE_SCOPE not in parsed, f"scope {self.FILE_SCOPE} is reserved for config files"
         parsed[self.FILE_SCOPE] = dict(name=cfg_name, paths=config_paths)
-        return cfgs, parsed, unknown_args
+        return cfgs, parsed, extra_args, unknown_args
 
-    def parse_args(self, args=None, namespace=None, **defaults) -> tuple[dict[str, Any] | Any, dict[str, Any]]:
+    def parse_args(
+        self, args=None, namespace=None, **defaults
+    ) -> tuple[dict[str, Any] | Any, dict[str, Any], argparse.Namespace]:
         """Parse arguments.
 
         Args:
@@ -181,15 +200,16 @@ class ConfigParser:
             **defaults: Defaults for constructing the config class.
 
         Returns:
-            tuple[dict[str, Any] | Any, dict[str, Any]]: Configs from the parsed arguments, and parsed yaml configs.
+            tuple[dict[str, Any] | Any, dict[str, Any], argparse.Namespace]: Configs from the parsed arguments,
+                parsed yaml configs, and extra arguments.
         """
-        cfgs, parsed, unknown_args = self._parse_args(args=args, namespace=namespace, **defaults)
+        cfgs, parsed, extra_args, unknown_args = self._parse_args(args=args, namespace=namespace, **defaults)
         assert len(unknown_args) == 0, f"unknown arguments {unknown_args}"
-        return cfgs, parsed
+        return cfgs, parsed, extra_args
 
     def parse_known_args(
         self, args=None, namespace=None, **defaults
-    ) -> tuple[dict[str, Any] | Any, dict[str, Any], list[str]]:
+    ) -> tuple[dict[str, Any] | Any, dict[str, Any], argparse.Namespace, list[str]]:
         """Parse arguments.
 
         Args:
@@ -198,8 +218,8 @@ class ConfigParser:
             **defaults: Defaults for constructing the config class.
 
         Returns:
-            tuple[dict[str, Any] | Any, dict[str, Any], list[str]]: Configs from the parsed arguments,
-                                                                    parsed yaml configs, and unknown arguments.
+            tuple[dict[str, Any] | Any, dict[str, Any], argparse.Namespace, list[str]]:
+                Configs from the parsed arguments, parsed yaml configs, extra arguments, and unknown arguments.
         """
         return self._parse_args(args=args, namespace=namespace, **defaults)
 
