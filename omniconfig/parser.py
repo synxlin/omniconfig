@@ -8,9 +8,6 @@ import typing as tp
 from .args import Arguments
 from .utils import dump_toml, dump_yaml, format_scope_and_prefix, load_toml, load_yaml, update_dict
 
-# from typing import Any, Callable, Sequence, Type, TypeVar
-
-
 __all__ = ["ConfigParser"]
 
 
@@ -75,28 +72,24 @@ class ConfigParser:
         )
         self._parser.add_argument(type(self).FILE_SCOPE, nargs="*", help="config file(s)", default=[])
 
-    def add_config(
-        self, cfg: ConfigType[tp.Any], /, scope: str | None = None, prefix: str | None = "", **defaults
-    ) -> None:
+    def add_config(self, cfg: ConfigType[tp.Any], /, scope: str = "", prefix: str | None = "", **defaults) -> None:
         """Add a config class to the parser.
 
         Args:
             cfg (`ConfigType[Any]`):
                 Config class to add.
-            scope (`str` or `None`, *optional*, defaults to `None`):
+            scope (`str`, *optional*, defaults to `""`):
                 Scope of the config class.
             prefix (`str` or `None`, *optional*, defaults to `""`):
                 Prefix of the config class. Defaults to `""`.
             **defaults:
                 Defaults for the arguments.
         """
+        assert isinstance(scope, str), f"{scope} is not a string"
         scope, prefix = format_scope_and_prefix(cfg, scope=scope, prefix=prefix)
         assert scope != self.FILE_SCOPE, f"scope {scope} is reserved for config files"
-        assert scope not in self._cfgs, f"scope {scope} already exists"
-        if len(self._cfgs) == 1:
-            _s = next(iter(self._cfgs))
-            assert _s.isidentifier(), f"scope {_s} is not a valid identifier"
-        if len(self._cfgs) >= 1:
+        assert scope not in self._cfgs, f'scope "{scope}" already exists'
+        if scope:
             assert scope.isidentifier(), f"scope {scope} is not a valid identifier"
         args = cfg.get_arguments(scope=scope, prefix=prefix, **defaults)
         args.add_to_parser(self._parser, suppress=True)
@@ -193,12 +186,22 @@ class ConfigParser:
         cfgs: dict[str, tp.Any] = {}
         for scope, (cfg, args, prefix) in self._cfgs.items():
             _parsed = args.to_dict()
-            _parsed_loaded, loaded = args.parse(loaded, flatten=False, parsed=False, prefix=prefix)
-            _parsed_namespaced, namespaced = args.parse(namespaced, flatten=True, parsed=True, prefix=prefix)
-            update_dict(_parsed, _parsed_loaded, strict=True)
-            update_dict(_parsed, _parsed_namespaced, strict=True)
+            _loaded = loaded.pop(scope, {}) if scope else loaded
+            if _loaded:
+                _parsed_loaded, _loaded = args.parse(_loaded, flatten=False, parsed=False, prefix=prefix)
+                update_dict(_parsed, _parsed_loaded, strict=True)
+                if scope:
+                    if _loaded:
+                        loaded[scope] = _loaded
+                else:
+                    loaded = _loaded
+                del _parsed_loaded
+            if namespaced:
+                _parsed_namespaced, namespaced = args.parse(namespaced, flatten=True, parsed=True, prefix=prefix)
+                update_dict(_parsed, _parsed_namespaced, strict=True)
+                del _parsed_namespaced
             parsed[scope] = _parsed
-            del _parsed, _parsed_loaded, _parsed_namespaced
+            del _parsed, _loaded
             prefix_ = f"{prefix}_" if prefix else ""
             len_prefix_ = len(prefix_)
             cfgs[scope] = cfg.from_dict(

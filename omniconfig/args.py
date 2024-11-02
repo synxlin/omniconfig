@@ -142,14 +142,13 @@ class Argument:
     desc: str = ""
 
     def __post_init__(self) -> None:
-        assert self.dest.isidentifier(), f"Invalid dest: {self.dest}"
+        assert self.dest.isidentifier(), f'Invalid dest: "{self.dest}"'
         if any(flag[0] == "-" for flag in self.flags):  # optional argument
-            assert all(flag[0] == "-" for flag in self.flags), f"Invalid flags: {self.flags}"
+            assert all(flag[0] == "-" for flag in self.flags), f'Invalid flags: "{self.flags}"'
         else:  # positional argument
-            assert len(self.flags) == 1, f"Invalid flags: {self.flags}"
-            assert self.dest == self.flags[0], f"Invalid dest: {self.dest}"
-        if not _argparse_keys_.issuperset(self.kwargs.keys()):
-            raise ValueError(f"Invalid argparse keys: {self.kwargs.keys()}")
+            assert len(self.flags) == 1, f'Invalid flags: "{self.flags}"'
+            assert self.dest == self.flags[0], f'Invalid dest: "{self.dest}"'
+        assert _argparse_keys_.issuperset(self.kwargs.keys()), f"Invalid argparse keys: {self.kwargs.keys()}"
 
     @property
     def default(self) -> tp.Any:
@@ -179,10 +178,10 @@ class Argument:
                 Whether to suppress the default.
         """
         dest = _format_dest(self.dest, prefix=prefix)
-        assert dest.isidentifier(), f"Invalid dest: {dest}"
+        assert dest.isidentifier(), f'Invalid dest: "{dest}"'
         flags = [_format_flag(flag, prefix=prefix) for flag in self.flags]
         flags = [flag for flag in flags if flag]
-        assert "-h" not in flags and "--help" not in flags, f"Invalid flags: {self.flags}"
+        assert "-h" not in flags and "--help" not in flags, f'Invalid flags: "{self.flags}"'
         kwargs = self.kwargs.copy()
         if suppress:
             kwargs["default"] = argparse.SUPPRESS
@@ -224,13 +223,13 @@ class Arguments:
 
     def __post_init__(self) -> None:
         if self.scope:
-            assert self.scope.isidentifier(), f"Invalid scope: {self.scope}"
+            assert self.scope.isidentifier(), f'Invalid scope: "{self.scope}"'
         else:
             self.scope = ""
         if self.prefix is None:
             self.prefix = self.scope
         elif self.prefix:
-            assert self.prefix.isidentifier(), f"Invalid prefix: {self.prefix}"
+            assert self.prefix.isidentifier(), f'Invalid prefix: "{self.prefix}"'
         else:
             self.prefix = ""
 
@@ -298,7 +297,7 @@ class Arguments:
         is_optionals: list[bool] = []
         flags: list[str] = []
         for flag in args:
-            assert flag and isinstance(flag, str), f"flag must be a non-empty string: {flag} in {args}"
+            assert flag and isinstance(flag, str), f'flag must be a non-empty string: "{flag}" in {args}'
             if flag[0] == "-":  # optional argument
                 is_optionals.append(True)
                 assert not flag.startswith("---"), f"long flags must start with two dashes: {args}"
@@ -322,12 +321,12 @@ class Arguments:
         # endregion
         # region infer dest
         dest = kwargs.pop("dest", flags[0].lstrip("-").replace("-", "_"))
-        assert isinstance(dest, str) and dest.isidentifier(), f"dest must be a valid python identifier: {dest}"
+        assert isinstance(dest, str) and dest.isidentifier(), f'dest must be a valid python identifier: "{dest}"'
         # endregion
-        assert not self._contains_dest(dest), f"dest must be unique: {dest}"
+        assert not self._contains_dest(dest), f'dest must be unique: "{dest}"'
         self._add_dest(dest)
         for flag in flags:
-            assert not self._contains_flag(flag), f"flag must be unique: {flag}"
+            assert not self._contains_flag(flag), f'flag must be unique: "{flag}"'
             self._add_flag(flag)
         desc = kwargs.pop("help", "").strip()
         self._arguments.append(Argument(dest=dest, flags=flags, kwargs=kwargs, desc=desc))
@@ -343,16 +342,16 @@ class Arguments:
             AssertionError: If `args` contains invalid flags.
         """
         assert isinstance(args, Arguments), f"args must be an instance of Arguments: {args}"
-        assert not self._contains_dest(args.scope), f"dest must be unique: {args.scope}"
+        assert not self._contains_dest(args.scope), f'dest must be unique: "{args.scope}"'
         self._add_dest(args.scope)
         for dest in args.dests:
             dest = _format_dest(dest, prefix=args.prefix)
-            assert not self._contains_dest(dest), f"dest must be unique: {dest}"
+            assert not self._contains_dest(dest), f'dest must be unique: "{dest}"'
             self._add_dest(dest)
         for flag in args.flags:
             flag = _format_flag(flag, prefix=args.prefix)
             if flag:
-                assert not self._contains_flag(flag), f"flag must be unique: {flag}"
+                assert not self._contains_flag(flag), f'flag must be unique: "{flag}"'
                 self._add_flag(flag)
         self._arguments.append(args)
         args._parents.append(self)
@@ -382,10 +381,10 @@ class Arguments:
         defaults: dict[str, tp.Any] = {}
         for arg in self.arguments:
             if isinstance(arg, Arguments):
-                assert arg.scope not in defaults, f"scope {arg.scope} is not unique in {self.scope}"
+                assert arg.scope not in defaults, f'scope "{arg.scope}" is not unique in "{self.scope}"'
                 defaults[arg.scope] = arg.to_dict()
             else:
-                assert arg.dest not in defaults, f"dest {arg.dest} is not unique in {self.scope}"
+                assert arg.dest not in defaults, f'dest "{arg.dest}" is not unique in "{self.scope}"'
                 defaults[arg.dest] = arg.default
         return defaults
 
@@ -415,7 +414,7 @@ class Arguments:
         known: dict[str, tp.Any] = {}
         for arg in self.arguments:
             if isinstance(arg, Arguments):
-                assert arg.scope not in known, f"scope {arg.scope} is not unique in {self.scope}"
+                assert arg.scope not in known, f'scope "{arg.scope}" is not unique in "{self.scope}"'
                 if flatten:
                     _known, _unknown = arg.parse(unknown, flatten=flatten, parsed=parsed, prefix=prefix)
                     if _known:
@@ -430,7 +429,7 @@ class Arguments:
                             unknown[arg.scope] = _unknown
                         known[arg.scope] = _known
             else:
-                assert arg.dest not in known, f"dest {arg.dest} is not unique in {self.scope}"
+                assert arg.dest not in known, f'dest "{arg.dest}" is not unique in "{self.scope}"'
                 dest = _format_dest(arg.dest, prefix=prefix) if flatten else arg.dest
                 if dest in unknown:
                     value = unknown.pop(dest)

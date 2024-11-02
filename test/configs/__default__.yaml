@@ -7,4 +7,3 @@ model:
       - -1
 eval:
   num_gpus: 1
-test: false

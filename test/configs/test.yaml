@@ -1,3 +1,4 @@
-test: true
+extra:
+  test: true
 model:
   unused: true

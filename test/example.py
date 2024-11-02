@@ -144,12 +144,12 @@ def main(args: tp.Any = None) -> None:  # noqa: C901
     """
     parser = omniconfig.ConfigParser("Evaluate Quantized Model")
     parser.add_config(Config)
-    parser.add_config(ExtraConfig)
+    parser.add_config(ExtraConfig, scope="extra")
     parser.add_extra_argument("--hello", type=int, default=0)
     parser._parser.add_argument("--unused-arg", type=int, default=0)
     configs, extra_args, unused_configs, unused_args, unknown_args = parser.parse_known_args(args)
-    assert isinstance(configs["config"], Config)
-    assert isinstance(configs["extra_config"], ExtraConfig)
+    assert isinstance(configs[""], Config)
+    assert isinstance(configs["extra"], ExtraConfig)
     return configs, extra_args, unused_configs, unused_args, unknown_args
 
 
