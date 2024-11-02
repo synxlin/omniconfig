@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "omniconfig"
-version = "0.1.7"
+version = "0.1.8"
 description = "Python package for parsing configurations from YAML and TOML and command-line interface."
 authors = ["Yujun Lin"]
 license = "Apache-2.0"
