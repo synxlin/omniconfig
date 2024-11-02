@@ -126,7 +126,6 @@ class ConfigParser:
         self, args=None, namespace=None, **defaults
     ) -> tuple[
         dict[str, tp.Any] | tp.Any,
-        dict[str, tp.Any],
         argparse.Namespace,
         dict[str, dict],
         argparse.Namespace | None,
@@ -240,7 +239,6 @@ class ConfigParser:
         self, args=None, namespace=None, **defaults
     ) -> tuple[
         dict[str, tp.Any] | tp.Any,
-        dict[str, tp.Any],
         argparse.Namespace,
         dict[str, dict],
         argparse.Namespace | None,
@@ -259,7 +257,6 @@ class ConfigParser:
         Returns:
             tuple[
                 dict[str, Any] | Any,
-                dict[str, Any],
                 argparse.Namespace,
                 dict[str, dict],
                 argparse.Namespace | None,
