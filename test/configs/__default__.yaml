@@ -1,12 +1,10 @@
 model:
-  name: MISSING
   enable_quant: false
   quant:
     dtype: torch.float16
     group_shapes:
-    - - -1
-      - -1
+    - - 1
       - -1
 eval:
-  num_gpus: 8
+  num_gpus: 1
 test: false

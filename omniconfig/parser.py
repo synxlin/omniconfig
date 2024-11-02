@@ -3,29 +3,32 @@
 
 import argparse
 import os
-from typing import Any, Callable, Sequence, Type, TypeVar
+import typing as tp
 
 from .args import Arguments
 from .utils import dump_toml, dump_yaml, format_scope_and_prefix, load_toml, load_yaml, update_dict
 
+# from typing import Any, Callable, Sequence, Type, TypeVar
+
+
 __all__ = ["ConfigParser"]
 
 
-_T = TypeVar("_T")
+_T = tp.TypeVar("_T")
 
 
-class ConfigType(Type[_T]):
+class ConfigType(tp.Type[_T]):
     def get_arguments(
-        cls: Type[_T],
+        cls: tp.Type[_T],
         /,
         *,
         scope: str = None,
         prefix: str = None,
-        overwrites: dict[str, Callable[[Arguments], None] | None] | None = None,
+        overwrites: dict[str, tp.Callable[[Arguments], None] | None] | None = None,
         **defaults,
     ) -> Arguments: ...
 
-    def from_dict(cls: Type[_T], /, parsed_args: dict[str, Any], **defaults) -> _T: ...
+    def from_dict(cls: tp.Type[_T], /, parsed_args: dict[str, tp.Any], **defaults) -> _T: ...
 
 
 class ConfigParser:
@@ -34,7 +37,7 @@ class ConfigParser:
     FILE_SCOPE: str = "cfgs"
     FILE_EXTS: tuple[str] = ("yaml", "yml", "toml")
 
-    _cfgs: dict[str, tuple[ConfigType[Any], Arguments, str]]
+    _cfgs: dict[str, tuple[ConfigType[tp.Any], Arguments, str]]
     _extras: set[str]
     _parser: argparse.ArgumentParser
 
@@ -44,10 +47,10 @@ class ConfigParser:
         usage: str | None = None,
         description: str | None = None,
         epilog: str | None = None,
-        parents: Sequence[argparse.ArgumentParser] = [],
+        parents: tp.Sequence[argparse.ArgumentParser] = [],
         formatter_class=argparse.HelpFormatter,
         fromfile_prefix_chars: str | None = None,
-        argument_default: Any = None,
+        argument_default: tp.Any = None,
         conflict_handler: str = "error",
         add_help: bool = True,
         allow_abbrev: bool = True,
@@ -73,15 +76,19 @@ class ConfigParser:
         self._parser.add_argument(type(self).FILE_SCOPE, nargs="*", help="config file(s)", default=[])
 
     def add_config(
-        self, cfg: ConfigType[Any], /, scope: str | None = None, prefix: str | None = "", **defaults
+        self, cfg: ConfigType[tp.Any], /, scope: str | None = None, prefix: str | None = "", **defaults
     ) -> None:
         """Add a config class to the parser.
 
         Args:
-            cfg (ConfigType[Any]): Config class to add.
-            scope (str | None, optional): Scope of the config class. Defaults to ``None``.
-            prefix (str | None, optional): Prefix of the config class. Defaults to ``""``.
-            **defaults: Defaults for the arguments.
+            cfg (`ConfigType[Any]`):
+                Config class to add.
+            scope (`str` or `None`, *optional*, defaults to `None`):
+                Scope of the config class.
+            prefix (`str` or `None`, *optional*, defaults to `""`):
+                Prefix of the config class. Defaults to `""`.
+            **defaults:
+                Defaults for the arguments.
         """
         scope, prefix = format_scope_and_prefix(cfg, scope=scope, prefix=prefix)
         assert scope != self.FILE_SCOPE, f"scope {scope} is reserved for config files"
@@ -99,13 +106,15 @@ class ConfigParser:
         """Add an extra argument to the parser.
 
         Args:
-            *args: Arguments to add.
-            **kwargs: Keyword arguments to add.
+            *args:
+                Arguments to add.
+            **kwargs:
+                Keyword arguments to add.
         """
         self._extras.add(self._parser.add_argument(*args, **kwargs).dest)
 
     @staticmethod
-    def _load(path: str) -> dict[str, Any]:
+    def _load(path: str) -> dict[str, tp.Any]:
         if path.endswith(".toml"):
             return load_toml(path)
         elif path.endswith(("yaml", "yml")):
@@ -115,17 +124,27 @@ class ConfigParser:
 
     def _parse_args(  # noqa: C901
         self, args=None, namespace=None, **defaults
-    ) -> tuple[dict[str, Any] | Any, dict[str, Any], argparse.Namespace, list[str]]:
-        parsed_args, unknown_args = self._parser.parse_known_args(args, namespace)
+    ) -> tuple[
+        dict[str, tp.Any] | tp.Any,
+        dict[str, tp.Any],
+        argparse.Namespace,
+        dict[str, dict],
+        argparse.Namespace | None,
+        list[str],
+    ]:
+        namespace, unknown_args = self._parser.parse_known_args(args, namespace)
         # region move extra arguments in parsed_args to a separate namespace
         extra_args = argparse.Namespace()
         for extra in self._extras:
-            setattr(extra_args, extra, getattr(parsed_args, extra))
-            delattr(parsed_args, extra)
+            setattr(extra_args, extra, getattr(namespace, extra))
+            delattr(namespace, extra)
         # endregion
+        loaded: dict[str, tp.Any] = {}
+        # region load config files
         import_paths: list[str] = []
         config_paths: list[str] = []
-        for path in getattr(parsed_args, self.FILE_SCOPE, []):
+        for path in getattr(namespace, self.FILE_SCOPE, []):
+            assert isinstance(path, str), f"{path} is not a string"
             if path.endswith(self.FILE_EXTS):
                 config_paths.append(path)
             else:
@@ -142,8 +161,8 @@ class ConfigParser:
         config_paths = imported_config_paths + config_paths
         del imported_config_paths
         assert len(config_paths) > 0, "no config file(s) provided"
-        loaded, filenames = {}, []
-        default_paths = []
+        filenames: list[str] = []
+        default_paths: list[str] = []
         for path in config_paths:
             assert os.path.isfile(path), f"{path} is not a file"
             assert path.endswith(self.FILE_EXTS), f"{path} is not a config file"
@@ -165,33 +184,40 @@ class ConfigParser:
                         default_paths.append(default_path)
                         break
         for path in default_paths:
-            loaded = update_dict(loaded, self._load(path))
+            loaded = update_dict(loaded, self._load(path), strict=False)
         for path in config_paths:
-            loaded = update_dict(loaded, self._load(path))
-        parsed, single = {}, len(self._cfgs) == 1
-        if single:
-            loaded[next(iter(self._cfgs))] = loaded
-        cfg_name = "[" + "]+[".join(filenames) + "]"
+            loaded = update_dict(loaded, self._load(path), strict=False)
+        # endregion
+        namespaced: dict[str, tp.Any] = vars(namespace)
+        namespaced.pop(self.FILE_SCOPE, None)
+        parsed: dict[str, dict] = {}
+        cfgs: dict[str, tp.Any] = {}
         for scope, (cfg, args, prefix) in self._cfgs.items():
-            parsed[scope] = args.parse(loaded[scope], reduced=False)
-        cfgs = {}
-        for scope, (cfg, args, prefix) in self._cfgs.items():
+            _parsed = args.to_dict()
+            _parsed_loaded, loaded = args.parse(loaded, flatten=False, parsed=False, prefix=prefix)
+            _parsed_namespaced, namespaced = args.parse(namespaced, flatten=True, parsed=True, prefix=prefix)
+            update_dict(_parsed, _parsed_loaded, strict=True)
+            update_dict(_parsed, _parsed_namespaced, strict=True)
+            parsed[scope] = _parsed
+            del _parsed, _parsed_loaded, _parsed_namespaced
             prefix_ = f"{prefix}_" if prefix else ""
-            _n = len(prefix_)
-            update_dict(parsed[scope], args.to_dict(parsed_args, prefix=prefix, reduced=True), strict=True)
+            len_prefix_ = len(prefix_)
             cfgs[scope] = cfg.from_dict(
-                parsed[scope], **{k[_n:]: v for k, v in defaults.items() if k.startswith(prefix_)}
+                parsed[scope], **{k[len_prefix_:]: v for k, v in defaults.items() if k.startswith(prefix_)}
             )
-        if single:
+        unused_args = None
+        if len(namespaced) > 0:
+            unused_args = argparse.Namespace()
+            for k, v in namespaced.items():
+                setattr(unused_args, k, v)
+        if len(self._cfgs) == 1:
             cfgs = next(iter(cfgs.values()))
             parsed = next(iter(parsed.values()))
-        assert self.FILE_SCOPE not in parsed, f"scope {self.FILE_SCOPE} is reserved for config files"
-        parsed[self.FILE_SCOPE] = dict(name=cfg_name, paths=config_paths)
-        return cfgs, parsed, extra_args, unknown_args
+        return cfgs, extra_args, loaded, unused_args, unknown_args
 
     def parse_args(
         self, args=None, namespace=None, **defaults
-    ) -> tuple[dict[str, Any] | Any, dict[str, Any], argparse.Namespace]:
+    ) -> tuple[dict[str, tp.Any] | tp.Any, argparse.Namespace]:
         """Parse arguments.
 
         Args:
@@ -200,26 +226,47 @@ class ConfigParser:
             **defaults: Defaults for constructing the config class.
 
         Returns:
-            tuple[dict[str, Any] | Any, dict[str, Any], argparse.Namespace]: Configs from the parsed arguments,
-                parsed yaml configs, and extra arguments.
+            tuple[dict[str, Any] | Any, argparse.Namespace]: Configs and extra arguments.
         """
-        cfgs, parsed, extra_args, unknown_args = self._parse_args(args=args, namespace=namespace, **defaults)
+        cfgs, extra_args, unused_cfgs, unused_args, unknown_args = self._parse_args(
+            args=args, namespace=namespace, **defaults
+        )
+        assert len(unused_cfgs) == 0, f"unused loaded configs {unused_cfgs}"
+        assert unused_args is None, f"unused parsed arguments {unused_args}"
         assert len(unknown_args) == 0, f"unknown arguments {unknown_args}"
-        return cfgs, parsed, extra_args
+        return cfgs, extra_args
 
     def parse_known_args(
         self, args=None, namespace=None, **defaults
-    ) -> tuple[dict[str, Any] | Any, dict[str, Any], argparse.Namespace, list[str]]:
+    ) -> tuple[
+        dict[str, tp.Any] | tp.Any,
+        dict[str, tp.Any],
+        argparse.Namespace,
+        dict[str, dict],
+        argparse.Namespace | None,
+        list[str],
+    ]:
         """Parse arguments.
 
         Args:
-            args (list[str] | None, optional): Arguments to parse. Defaults to ``None``.
-            namespace (argparse.Namespace | None, optional): Namespace to parse. Defaults to ``None``.
-            **defaults: Defaults for constructing the config class.
+            args (`list[str]` or `None`, *optional*, defaults to `None`):
+                Arguments to parse.
+            namespace (`argparse.Namespace` or `None`, *optional*, defaults to `None`):
+                Namespace to parse.
+            **defaults:
+                Defaults for constructing the config class.
 
         Returns:
-            tuple[dict[str, Any] | Any, dict[str, Any], argparse.Namespace, list[str]]:
-                Configs from the parsed arguments, parsed yaml configs, extra arguments, and unknown arguments.
+            tuple[
+                dict[str, Any] | Any,
+                dict[str, Any],
+                argparse.Namespace,
+                dict[str, dict],
+                argparse.Namespace | None,
+                list[str]
+            ]:
+                Configs from the parsed arguments, extra arguments,
+                unused loaded configs, unused parsed arguments, and unknown arguments.
         """
         return self._parse_args(args=args, namespace=namespace, **defaults)
 
@@ -230,10 +277,8 @@ class ConfigParser:
             path (str | None, optional): Path to dump the file.
         """
         default: dict[str, dict] = {}
-        for scope, (cfg, args, prefix) in self._cfgs.items():
-            default[scope] = args.to_dict(detailed=False)
-        if len(self._cfgs) == 1:
-            default = next(iter(default.values()))
+        for _, (_, args, _) in self._cfgs.items():
+            default.update(args.to_dict())
         if path.endswith(("yaml", "yml")):
             return dump_yaml(default, path=path)
         elif path.endswith("toml"):

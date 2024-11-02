@@ -14,5 +14,5 @@ from .configclass import (
     get_arguments,
 )
 from .parser import ConfigParser
-from .utils import dump_toml, dump_yaml
+from .utils import BooleanOptionalAction, dump_toml, dump_yaml
 from .version import __version__
