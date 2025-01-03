@@ -34,7 +34,7 @@ class ConfigParser:
     FILE_SCOPE: str = "cfgs"
     FILE_EXTS: tuple[str] = ("yaml", "yml", "toml")
 
-    _cfgs: dict[str, tuple[ConfigType[tp.Any], Arguments, str]]
+    _cfgs: dict[str, tuple[ConfigType[tp.Any], Arguments]]
     _extras: set[str]
     _parser: argparse.ArgumentParser
 
@@ -93,7 +93,7 @@ class ConfigParser:
             assert scope.isidentifier(), f"scope {scope} is not a valid identifier"
         args = cfg.get_arguments(scope=scope, prefix=prefix, **defaults)
         args.add_to_parser(self._parser, suppress=True)
-        self._cfgs[scope] = (cfg, args, prefix)
+        self._cfgs[scope] = (cfg, args)
 
     def add_extra_argument(self, *args, **kwargs) -> None:
         """Add an extra argument to the parser.
@@ -184,11 +184,11 @@ class ConfigParser:
         namespaced.pop(self.FILE_SCOPE, None)
         parsed: dict[str, dict] = {}
         cfgs: dict[str, tp.Any] = {}
-        for scope, (cfg, args, prefix) in self._cfgs.items():
+        for scope, (cfg, args) in self._cfgs.items():
             _parsed = args.to_dict()
             _loaded = loaded.pop(scope, {}) if scope else loaded
             if _loaded:
-                _parsed_loaded, _loaded = args.parse(_loaded, flatten=False, parsed=False, prefix=prefix)
+                _parsed_loaded, _loaded = args.parse(_loaded, flatten=False, parsed=False)
                 update_dict(_parsed, _parsed_loaded, strict=True)
                 if scope:
                     if _loaded:
@@ -197,12 +197,12 @@ class ConfigParser:
                     loaded = _loaded
                 del _parsed_loaded
             if namespaced:
-                _parsed_namespaced, namespaced = args.parse(namespaced, flatten=True, parsed=True, prefix=prefix)
+                _parsed_namespaced, namespaced = args.parse(namespaced, flatten=True, parsed=True)
                 update_dict(_parsed, _parsed_namespaced, strict=True)
                 del _parsed_namespaced
             parsed[scope] = _parsed
             del _parsed, _loaded
-            prefix_ = f"{prefix}_" if prefix else ""
+            prefix_ = f"{args.prefix}_" if args.prefix else ""
             len_prefix_ = len(prefix_)
             cfgs[scope] = cfg.from_dict(
                 parsed[scope], **{k[len_prefix_:]: v for k, v in defaults.items() if k.startswith(prefix_)}
@@ -277,7 +277,7 @@ class ConfigParser:
             path (str | None, optional): Path to dump the file.
         """
         default: dict[str, dict] = {}
-        for _, (_, args, _) in self._cfgs.items():
+        for _, (_, args) in self._cfgs.items():
             default.update(args.to_dict())
         if path.endswith(("yaml", "yml")):
             return dump_yaml(default, path=path)

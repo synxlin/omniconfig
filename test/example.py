@@ -134,6 +134,7 @@ class ExtraConfig:
     """
 
     test: bool = False
+    name: str = "extra"
 
 
 def main(args: tp.Any = None) -> None:  # noqa: C901
@@ -150,6 +151,11 @@ def main(args: tp.Any = None) -> None:  # noqa: C901
     configs, extra_args, unused_configs, unused_args, unknown_args = parser.parse_known_args(args)
     assert isinstance(configs[""], Config)
     assert isinstance(configs["extra"], ExtraConfig)
+    print(f"Configs: {configs}")
+    print(f"Extra Args: {extra_args}")
+    print(f"Unused Configs: {unused_configs}")
+    print(f"Unused Args: {unused_args}")
+    print(f"Unknown Args: {unknown_args}")
     return configs, extra_args, unused_configs, unused_args, unknown_args
 
 
