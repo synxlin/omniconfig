@@ -1,217 +1,643 @@
-# omniconfig
+# OmniConfig
 
-Python package for parsing configurations from YAML and TOML files with the command-line interface.
+A powerful Python library for managing configurations from multiple sources - command-line arguments, configuration files (YAML/JSON), and dataclass defaults - with seamless integration and type safety.
+
+## Features
+
+✨ **Unified Configuration Management**: Seamlessly integrate command-line arguments, YAML/JSON files, and dataclass defaults  
+🔗 **Cross-Configuration References**: Reference values between different configuration sections using `::path::to::value`  
+🎯 **Type Safety**: Full type hint support with automatic type validation and conversion  
+📝 **Decorator-Based**: Simple `@dataclass` decorator approach - no complex class hierarchies  
+🔄 **Smart Merging**: Intelligent merging of configurations from multiple sources with clear precedence  
+🏭 **Custom Type Support**: Register custom types with factory and reducer functions  
+📂 **Hierarchical Defaults**: Automatic discovery and loading of `__default__.yaml` files  
+🎨 **Flexible CLI Generation**: Automatic generation of command-line arguments from dataclass fields  
 
 ## Installation
 
-### Pip
+### From PyPI
 
-You can install omniconfig using pip:
-
-```
+```bash
 pip install omniconfig
 ```
 
-### Build from source
+### From Source
 
-1. Clone this repository and navigate to lmquant folder
-```
+```bash
 git clone https://github.com/synxlin/omniconfig
 cd omniconfig
+pip install -e .
 ```
 
-2. Install Package
-```
-conda env create -f environment.yml
-poetry install
+### Development Installation
+
+```bash
+git clone https://github.com/synxlin/omniconfig
+cd omniconfig
+uv sync  # or: pip install -e ".[dev]"
 ```
 
-## Usage
-
-Decorator `configclass` in `omniconfig` package can help build argument parser from `dataclass` in `dataclasses`. Here is an example:
+## Quick Start
 
 ```python
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import List
+from omniconfig import OmniConfigParser
 
-import omniconfig
-
-
-@omniconfig.configclass
-@dataclass
-class EvalConfig:
-    """Evaluation Config class.
-
-    Attributes:
-        num_gpus (int): the number of GPUs. Defaults to ``8``.
-    """
-
-    num_gpus: int = 8
-
-
-@omniconfig.configclass
-@dataclass
-class QuantConfig:
-    """Quantization config class.
-
-    Attributes:
-        dtype (str): Quantization data type. Defaults to ``"torch.float16"``.
-        group_shape (list[int]): Quantization group shape. Defaults to ``(1, -1)``.
-    """
-
-    dtype: str = "torch.float16"
-    group_shape: list[int] = (1, -1)
-
-    @classmethod
-    def update_get_arguments(
-        cls: type["QuantConfig"],
-        *,
-        overwrites: dict[str, Callable | None] | None = None,
-        defaults: dict[str, Any] | None = None,
-    ) -> tuple[dict[str, Callable | None], dict[str, Any]]:
-        """Get the arguments for the quantization configuration."""
-        overwrites = overwrites or {}
-        defaults = defaults or {}
-        overwrites.setdefault(
-            "group_shape",
-            lambda parser: parser.add_argument(
-                "--group-shape",
-                nargs="+",
-                type=int,
-                default=defaults.get("group_shape", (1, -1)),
-                help="Quantization group shape",
-            ),
-        )
-        return overwrites, defaults
-
-
-@omniconfig.configclass
 @dataclass
 class ModelConfig:
-    """Model Config class.
+    layers: List[int] = field(default_factory=lambda: [128, 64, 32])
+    dropout: float = 0.1
 
-    Attributes:
-        name (str): the model name.
-        group (str): the model family.
-    """
-
-    name: str
-    family: str = field(init=False, default="")
-
-    def __post_init__(self):
-        self.family = self.name.split("-")[0]
-
-
-@omniconfig.configclass
 @dataclass
-class QuantizedModelConfig(ModelConfig):
-    """Quantized Model Config class.
+class TrainingConfig:
+    learning_rate: float = 0.001
+    batch_size: int = 32
+    epochs: int = 100
+    model: ModelConfig = field(default_factory=ModelConfig)
 
-    Attributes:
-        name (str): the model name.
-        group (str): the model group.
-        quant (QuantConfig): quantization configuration. Defaults to ``None``.
-    """
+# Create parser and register configs
+parser = OmniConfigParser()
+parser.add_config(TrainingConfig, scope="train")
 
-    quant: QuantConfig | None = None
+# Parse from command line
+# python train.py --train-learning-rate=0.01 --train-model-layers 256 128 64
+config, *_ = parser.parse_known_args()
 
+# Access configuration
+print(config.train.learning_rate)   # 0.01
+print(config.train.model.layers)    # [256, 128, 64]
+```
 
-@omniconfig.configclass
+## Core Concepts
+
+### Dataclass Configurations
+
+OmniConfig works with standard Python dataclasses:
+
+```python
+from dataclasses import dataclass, field
+from typing import Optional, List, Dict
+
+@dataclass
+class DatabaseConfig:
+    host: str = "localhost"
+    port: int = 5432
+    username: str = "admin"
+    password: Optional[str] = None
+    options: Dict[str, str] = field(default_factory=dict)
+```
+
+### Scopes and Flags
+
+- **Scope**: Namespace where config is stored (`config.train`, `config.model`)
+- **Flag**: CLI prefix for arguments (`--train-lr`, `--model-size`)
+
+```python
+parser = OmniConfigParser()
+
+# Default: scope and flag are the same
+parser.add_config(TrainingConfig, scope="train")
+# CLI: --train-learning-rate 0.001
+
+# Custom flag
+parser.add_config(ModelConfig, scope="model", flag="m")  
+# CLI: --m-layers 128 64
+
+# Empty flag (no prefix)
+parser.add_config(DataConfig, scope="data", flag="")
+# CLI: --path /data/train
+```
+
+## Usage Examples
+
+### Basic Configuration
+
+```python
+from dataclasses import dataclass
+from omniconfig import OmniConfigParser
+
+@dataclass
+class AppConfig:
+    app_name: str = "MyApp"
+    debug: bool = False
+    port: int = 8080
+    host: str = "0.0.0.0"
+
+parser = OmniConfigParser()
+parser.add_config(AppConfig, scope="app")
+
+# Parse command line: python app.py --app-debug=true --app-port=9000
+config, *_ = parser.parse_known_args()
+
+print(f"Starting {config.app.app_name} on {config.app.host}:{config.app.port}")
+```
+
+### Nested Configurations
+
+```python
+@dataclass
+class DatabaseConfig:
+    host: str = "localhost"
+    port: int = 5432
+
+@dataclass
+class CacheConfig:
+    enabled: bool = True
+    ttl: int = 3600
+
+@dataclass
+class ServerConfig:
+    database: DatabaseConfig = field(default_factory=DatabaseConfig)
+    cache: CacheConfig = field(default_factory=CacheConfig)
+    workers: int = 4
+
+parser = OmniConfigParser()
+parser.add_config(ServerConfig, scope="server")
+
+# CLI: --server-database-host db.example.com --server-cache-ttl 7200
+config, *_ = parser.parse_known_args()
+```
+
+### Configuration Files
+
+Create a YAML configuration file `config.yaml`:
+
+```yaml
+train:
+  learning_rate: 0.001
+  batch_size: 64
+  optimizer:
+    name: adam
+    momentum: 0.9
+    weight_decay: 0.0001
+
+model:
+  architecture: resnet50
+  layers: [64, 128, 256, 512]
+  dropout: 0.2
+```
+
+Load it with OmniConfig:
+
+```python
+@dataclass
+class OptimizerConfig:
+    name: str = "sgd"
+    momentum: float = 0.9
+    weight_decay: float = 0.0
+
+@dataclass
+class TrainConfig:
+    learning_rate: float = 0.01
+    batch_size: int = 32
+    optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
+
+@dataclass
+class ModelConfig:
+    architecture: str = "resnet18"
+    layers: List[int] = field(default_factory=lambda: [64, 128])
+    dropout: float = 0.1
+
+parser = OmniConfigParser()
+parser.add_config(TrainConfig, scope="train")
+parser.add_config(ModelConfig, scope="model")
+
+# Load from file and override with CLI
+# python train.py config.yaml --train-batch-size 128
+config, *_ = parser.parse_known_args()
+```
+
+### Cross-Configuration References
+
+Reference values from other configurations using the `::scope::field` syntax:
+
+```yaml
+# shared_config.yaml
+shared:
+  learning_rate: 0.001
+  optimizers:
+    adam:
+      beta1: 0.9
+      beta2: 0.999
+    sgd:
+      momentum: 0.9
+      nesterov: true
+
+train:
+  # Reference shared learning rate
+  learning_rate: "::shared::learning_rate"
+  # Reference and override specific fields
+  optimizer:
+    _reference_: "::shared::optimizers::adam"
+    beta1: 0.95  # Override beta1
+
+eval:
+  # Direct reference (no overrides)
+  optimizer: "::shared::optimizers::adam"
+```
+
+```python
+@dataclass
+class OptimizerConfig:
+    beta1: float = 0.9
+    beta2: float = 0.999
+
+@dataclass  
+class SharedConfig:
+    learning_rate: float = 0.001
+    optimizers: Dict[str, OptimizerConfig] = field(default_factory=dict)
+
+@dataclass
+class TrainConfig:
+    learning_rate: float = 0.01
+    optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
+
+parser = OmniConfigParser()
+parser.add_config(SharedConfig, scope="shared")
+parser.add_config(TrainConfig, scope="train")
+
+config, *_ = parser.parse_known_args(["shared_config.yaml"])
+
+# train.learning_rate references shared.learning_rate
+assert config.train.learning_rate == config.shared.learning_rate
+
+# train.optimizer is a modified copy of shared.optimizers.adam
+assert config.train.optimizer.beta1 == 0.95  # Overridden
+assert config.train.optimizer.beta2 == 0.999  # From reference
+```
+
+### Custom Types
+
+Register custom types for automatic conversion:
+
+```python
+from pathlib import Path
+from datetime import datetime
+from omniconfig import OmniConfig
+
+# Register Path type
+OmniConfig.register_type(
+    Path,
+    type_hint=str,
+    factory=lambda x: Path(x),
+    reducer=lambda x: str(x)
+)
+
+# Register datetime type
+OmniConfig.register_type(
+    datetime,
+    type_hint=str,
+    factory=lambda x: datetime.fromisoformat(x),
+    reducer=lambda x: x.isoformat()
+)
+
+@dataclass
+class ExperimentConfig:
+    name: str = "experiment"
+    output_dir: Path = Path("./outputs")
+    checkpoint_dir: Optional[Path] = None
+    start_time: datetime = field(default_factory=datetime.now)
+    model_paths: List[Path] = field(default_factory=list)
+
+parser = OmniConfigParser()
+parser.add_config(ExperimentConfig, scope="exp")
+
+# CLI: --exp-output-dir /data/outputs --exp-model-paths model1.pt model2.pt
+config, *_ = parser.parse_known_args()
+
+assert isinstance(config.exp.output_dir, Path)
+assert isinstance(config.exp.start_time, datetime)
+```
+
+### Complex Data Structures
+
+```python
+from typing import Dict, List, Optional, Union
+
+@dataclass
+class DatasetConfig:
+    name: str
+    path: str
+    batch_size: int = 32
+    shuffle: bool = True
+
+@dataclass
+class ExperimentConfig:
+    # Dict of datasets
+    datasets: Dict[str, DatasetConfig] = field(default_factory=dict)
+    
+    # List of metric names
+    metrics: List[str] = field(default_factory=lambda: ["accuracy", "loss"])
+    
+    # Nested dict structure
+    hyperparameters: Dict[str, Dict[str, float]] = field(default_factory=dict)
+    
+    # Union types
+    scheduler: Optional[Union[str, Dict[str, float]]] = None
+
+parser = OmniConfigParser()
+parser.add_config(ExperimentConfig, scope="exp")
+
+# From YAML
+yaml_config = """
+exp:
+  datasets:
+    train:
+      name: imagenet_train
+      path: /data/imagenet/train
+      batch_size: 256
+    val:
+      name: imagenet_val
+      path: /data/imagenet/val
+      shuffle: false
+  
+  metrics: [accuracy, top5_accuracy, loss]
+  
+  hyperparameters:
+    optimizer:
+      lr: 0.001
+      momentum: 0.9
+    scheduler:
+      gamma: 0.1
+      step_size: 30
+"""
+
+# Or from CLI with JSON syntax
+# --exp-datasets '{"train": {"name": "custom", "path": "/data"}}'
+# --exp-hyperparameters optimizer.lr=0.01 scheduler.gamma=0.2
+```
+
+## Advanced Features
+
+### Priority and Merging
+
+Configuration sources have the following priority (highest to lowest):
+1. Command-line arguments
+2. Explicitly specified configuration files
+3. Default configuration files (`__default__.yaml`)
+4. Dataclass defaults
+
+```python
+# dataclass default: 0.001
+# default.yaml: 0.01  
+# config.yaml: 0.02
+# CLI: --train-learning-rate 0.03
+
+# Final value: 0.03 (CLI wins)
+```
+
+### Hierarchical Default Files
+
+OmniConfig automatically discovers and loads `__default__.yaml` files:
+
+```
+configs/
+├── __default__.yaml          # Global defaults
+└── experiments/
+    ├── __default__.yaml      # Experiment defaults
+    └── resnet/
+        ├── __default__.yaml  # ResNet defaults
+        └── resnet50.yaml     # Specific config
+```
+
+### Partial Updates vs Overwrites
+
+```python
+# Partial update (merge)
+--train-optimizer lr=0.001 momentum=0.9
+
+# Complete overwrite
+--train-optimizer '{"lr": 0.001, "momentum": 0.9}'
+
+# In YAML
+train:
+  optimizer:
+    _overwrite_: true  # Replace entire optimizer
+    lr: 0.001
+    momentum: 0.9
+```
+
+### List and Dict Operations
+
+```python
 @dataclass
 class Config:
-    """Config class.
+    layers: List[int] = field(default_factory=lambda: [128, 64])
+    params: Dict[str, float] = field(default_factory=dict)
 
-    Attributes:
-        model (QuantizedModelConfig): the quantized model config.
-        eval (EvalConfig): the evaluation config.
-    """
+# List overwrite
+--config-layers 256 128 64
 
-    model: QuantizedModelConfig
-    eval: EvalConfig
+# List partial update (by index)
+--config-layers 0=256 2=32
 
-    @staticmethod
-    def parse_args(args: Any = None) -> tuple["Config", dict[str, dict], list[str]]:
-        """Parse arguments.
-
-        Args:
-            args (list[str], optional): Arguments to parse. Defaults to ``None``.
-
-        Returns:
-            tuple[Config, dict[str, dict], list[str]]: Configs from the parsed arguments,
-                                                       parsed yaml configs, and unknown arguments.
-        """
-        parser = omniconfig.ConfigParser("Evaluate Quantized Model")
-        parser.add_config(Config)
-        config, parsed_args, unknown_args = parser.parse_known_args(args)
-        assert isinstance(config, Config)
-        return config, parsed_args, unknown_args
-
-    @staticmethod
-    def dump_default(path: str = "default.yaml") -> None:
-        """Dump default configuration to a yaml file.
-
-        Args:
-            path (str, optional): The path to save the default configuration. Defaults to ``"default.yaml"``.
-        """
-        parser = omniconfig.ConfigParser("Evaluate Quantized Model")
-        parser.add_config(Config)
-        parser.dump_default(path)
-
-def main(args: Any = None) -> None:  # noqa: C901
-    """Evaluate Quantized Model with the given arguments.
-
-    Args:
-        args (list[str], optional): Arguments to parse. Defaults to ``None``.
-    """
-    config, parsed_args, unknown_args = Config.parse_args(args)
-    ...
+# Dict operations
+--config-params lr=0.001 momentum=0.9
+--config-params '{"lr": 0.001, "momentum": 0.9}'  # Overwrite
 ```
 
-In the example above, ``configclass`` will automatically generate the following flags for command-line argument parser:
+### Extra Arguments
 
-```
-usage: Evaluate Quantized Model [-h] [--model-name MODEL_NAME] [--model-enable-quant] [--model-quant-dtype MODEL_QUANT_DTYPE] [--model-quant-group-shape MODEL_QUANT_GROUP_SHAPE [MODEL_QUANT_GROUP_SHAPE ...]]
-                                [--eval-num-gpus EVAL_NUM_GPUS]
-                                [cfgs ...]
+Handle additional arguments not part of configs:
 
-positional arguments:
-  cfgs                  config file(s)
+```python
+parser = OmniConfigParser()
+parser.add_config(TrainConfig, scope="train")
+parser.add_extra_argument("--wandb-project", type=str)
+parser.add_extra_argument("--seed", type=int, default=42)
 
-options:
-  -h, --help            show this help message and exit
-  --model-name MODEL_NAME
-                        the model name for model.
-  --model-enable-quant  Enable quant for model. Default: False.
-  --model-quant-dtype MODEL_QUANT_DTYPE
-                        Quantization data type for model_quant. Default: torch.float16.
-  --model-quant-group-shape MODEL_QUANT_GROUP_SHAPE [MODEL_QUANT_GROUP_SHAPE ...]
-                        Quantization group shape for model_quant. Default: (1, -1).
-  --eval-num-gpus EVAL_NUM_GPUS
-                        the number of GPUs for eval. Default: 8.
+config, extra_args, *_ = parser.parse_known_args()
+
+print(extra_args.wandb_project)  # Access extra arguments
+print(extra_args.seed)           # 42 (default)
 ```
 
-Note that
+## API Reference
 
-> ``configclass`` will automatically extract help message from the docstring of the class.
+### OmniConfigParser
 
-> ``configclass`` will always set the first positional argument as paths to config files. Current supported config file type is YAML and TOML. An example YAML config should be like:
-```YAML
+```python
+parser = OmniConfigParser(
+    prog=None,                        # Program name
+    description=None,                 # Program description  
+    parser=None,                      # Use existing ArgumentParser
+    suppress_cli=False,               # Disable CLI argument generation
+    keep_cli_flag_underscores=False,  # Keep underscores in flags
+)
+```
+
+**Methods:**
+- `add_config(cls, scope="", flag=None, help="")`: Register a dataclass configuration
+- `add_extra_argument(*args, **kwargs)`: Add additional argument (same as ArgumentParser)
+- `parse_known_args(args=None)`: Parse arguments and return configuration
+- `set_logging_level(level)`: Set logging verbosity
+
+**Returns from `parse_known_args()`:**
+```python
+config, extra_args, unused_args, used_data, unused_data, unknown_args = parser.parse_known_args()
+```
+- `config`: OmniConfigNamespace with all configurations
+- `extra_args`: Namespace with extra CLI arguments
+- `unused_args`: Namespace with unused CLI arguments
+- `used_data`: Dict of used config fields
+- `unused_data`: Dict of unused config fields
+- `unknown_args`: List of unknown CLI arguments
+
+### OmniConfig
+
+Global registry for custom types:
+
+```python
+# Register a custom type
+OmniConfig.register_type(
+    type_,       # The custom type class
+    type_hint,   # Type hint for parsing (e.g., str, dict[str, float])
+    factory,     # Function to create type from type_hint
+    reducer      # Function to convert type to type_hint
+)
+
+# Check if type is registered
+OmniConfig.is_type_registered(Path)  # True/False
+
+# Clear all registered types
+OmniConfig.clear_type_registry()
+```
+
+### OmniConfigNamespace
+
+Container for parsed configurations:
+
+```python
+# Access by attribute
+config.train.learning_rate
+
+# Access by key
+config["train"]["learning_rate"]
+
+# Get configuration object
+train_config = config.train  # Returns TrainingConfig instance
+```
+
+## Configuration File Formats
+
+### YAML Format
+
+```yaml
+# Basic fields
+train:
+  learning_rate: 0.001
+  batch_size: 32
+  epochs: 100
+
+# Nested configs
 model:
-  name: llama2-7b
-  enable_quant: true
-  quant:
-    dtype: sint8
-    group_shape:
-    - 1
-    - -1
-eval:
-  num_gpus: 8
+  encoder:
+    layers: [128, 256, 512]
+    dropout: 0.1
+  decoder:
+    layers: [512, 256, 128]
+    dropout: 0.2
+
+# References
+experiment:
+  model: "::model::encoder"
+  optimizer:
+    _reference_: "::shared::optimizers::adam"
+    lr: 0.01  # Override
+
+# Lists and dicts
+data:
+  datasets:
+    - name: train
+      path: /data/train
+    - name: val
+      path: /data/val
+  augmentations:
+    flip: true
+    rotate: 90
 ```
 
-> in ``QuantConfig``, we overwrite the command-line parser for field ``group_shape`` by overriding the classmethod ``update_get_arguments``. We can also add any other field inside the classmethod ``update_get_arguments`` and override the classmethod ``update_from_dict`` to handle these extra fields.
+### JSON Format
 
-> in ``ModelConfig``, the field ``family`` is set with ``init=False``, and thus ``configclass`` will not generate parser for ``family`` field.
+```json
+{
+  "train": {
+    "learning_rate": 0.001,
+    "batch_size": 32,
+    "epochs": 100
+  },
+  "model": {
+    "layers": [128, 256, 512],
+    "dropout": 0.1
+  },
+  "references": {
+    "_reference_": "::shared::base_config",
+    "custom_field": "override"
+  }
+}
+```
 
-> class ``QuantizedModelConfig`` inherited from ``ModelConfig``, thus it will also inherited all fields from ``ModelConfig``.
+## Error Handling
 
-> in ``QuantizedModelConfig``, the field ``quant`` is a type of ``Optional[QuantConfig]``, and thus, the parser will automatically add a ``--model-enable-quant`` to help set field ``quant`` to ``None``.
+### Common Errors
+
+```python
+# Type mismatch
+ConfigParseError: Cannot parse 'abc' as int for field 'batch_size'
+
+# Missing required field  
+ConfigValidationError: Missing required field 'name' in DataConfig
+
+# Invalid reference
+ConfigReferenceError: Cannot resolve reference '::invalid::path'
+
+# Circular reference
+CircularReferenceError: Circular reference detected: a → b → c → a
+```
+
+## Best Practices
+
+1. **Use Type Hints**: Always provide type hints for better validation and IDE support
+2. **Provide Defaults**: Set sensible defaults for all fields when possible
+3. **Organize with Scopes**: Group related configurations under logical scopes
+4. **Document Fields**: Use docstrings to document configuration classes
+5. **Validate Early**: Validate configurations as soon as they're loaded
+6. **Use References**: Avoid duplication by using references for shared values
+7. **Version Configs**: Keep configuration files in version control
+
+## Contributing
+
+Contributions are welcome! Please read our [Contributing Guide](CONTRIBUTING.md) for details on our code of conduct and the process for submitting pull requests.
+
+### Development Setup
+
+```bash
+# Clone the repository
+git clone https://github.com/synxlin/omniconfig
+cd omniconfig
+
+# Install in development mode
+pip install -e ".[dev]"
+
+# Run tests
+pytest
+
+# Run with coverage
+pytest --cov=omniconfig
+
+# Format code
+ruff format .
+
+# Lint code
+ruff check .
+```
+
+## License
+
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+
+## Acknowledgments
+
+- Inspired by OmegaConf, and argparse
+- Designed for researchers and developers who need flexible configuration management

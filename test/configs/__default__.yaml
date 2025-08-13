@@ -1,9 +1,0 @@
-model:
-  enable_quant: false
-  quant:
-    dtype: torch.float16
-    group_shapes:
-    - - 1
-      - -1
-eval:
-  num_gpus: 1

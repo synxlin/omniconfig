@@ -1,28 +1,40 @@
-[tool.poetry]
+[project]
 name = "omniconfig"
-version = "0.1.10"
+version = "1.0.0"
 description = "Python package for parsing configurations from YAML and TOML and command-line interface."
-authors = ["Yujun Lin"]
-license = "Apache-2.0"
+authors = [{name = "Yujun Lin"}]
+license = {text = "Apache-2.0"}
 readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "PyYAML>=6.0",
+    "toml>=0.10",
+    "docstring-parser>=0.15",
+]
 
-[tool.poetry.dependencies]
-python = ">=3.10"
-PyYAML = ">=6.0"
-toml = ">=0.10"
-docstring-parser = ">=0.15"
-
-[tool.poetry.group.dev.dependencies]
-ipython = ">= 8.0.0"
+[project.optional-dependencies]
+dev = [
+    "ipython>=8.0.0",
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "ruff>=0.12.0"
+]
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["uv_build>=0.8.4,<0.9.0"]
+build-backend = "uv_build"
 
 [tool.ruff]
-line-length = 120
+line-length = 99
 indent-width = 4
-target-version = "py310"
+target-version = "py313"
+
+[tool.ruff.format]
+docstring-code-format = true
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
 
 [tool.ruff.lint]
 select = ["B", "C", "E", "F", "I", "W"]
@@ -34,8 +46,39 @@ max-complexity = 15
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401", "F403"]
 
-[tool.ruff.format]
-quote-style = "double"
-indent-style = "space"
-skip-magic-trailing-comma = false
-line-ending = "auto"
+[tool.ruff.lint.pycodestyle]
+max-doc-length = 72
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q --strict-markers --strict-config"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+]
+filterwarnings = [
+    "error",
+    "ignore::UserWarning",
+    "ignore::DeprecationWarning",
+]
+
+[tool.coverage.run]
+source = ["omniconfig"]
+omit = ["tests/*", "**/__pycache__/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+]

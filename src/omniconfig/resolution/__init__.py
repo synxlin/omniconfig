@@ -1,0 +1,1 @@
+"""Resolution functionality for OmniConfig."""
