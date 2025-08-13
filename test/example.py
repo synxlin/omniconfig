@@ -1,5 +1,9 @@
+# -*- coding: utf-8 -*-
+"""Test example for omniconfig."""
+
+import argparse
+import typing as tp
 from dataclasses import dataclass, field
-from typing import Any, Callable
 
 import omniconfig
 
@@ -27,29 +31,10 @@ class QuantConfig:
     """
 
     dtype: str = "torch.float16"
-    group_shape: list[int] = (1, -1)
-
-    @classmethod
-    def update_get_arguments(
-        cls: type["QuantConfig"],
-        *,
-        overwrites: dict[str, Callable | None] | None = None,
-        defaults: dict[str, Any] | None = None,
-    ) -> tuple[dict[str, Callable | None], dict[str, Any]]:
-        """Get the arguments for the quantization configuration."""
-        overwrites = overwrites or {}
-        defaults = defaults or {}
-        overwrites.setdefault(
-            "group_shape",
-            lambda parser: parser.add_argument(
-                "--group-shape",
-                nargs="+",
-                type=int,
-                default=defaults.get("group_shape", (1, -1)),
-                help="Quantization group shape",
-            ),
-        )
-        return overwrites, defaults
+    group_shapes: list[list[int]] = field(
+        default=((-1, -1, -1),),
+        metadata={omniconfig.ARGPARSE_KWARGS: {"nargs": "+", "type": lambda s: [int(n) for n in s.split(",")]}},
+    )
 
 
 @omniconfig.configclass
@@ -96,22 +81,35 @@ class Config:
     model: QuantizedModelConfig
     eval: EvalConfig
 
-    @staticmethod
-    def parse_args(args: Any = None) -> tuple["Config", dict[str, dict], list[str]]:
+    @classmethod
+    def parse_args(
+        cls: tp.Self,
+        args: tp.Any = None,
+    ) -> tuple[
+        tp.Self,
+        dict[str, tp.Any],
+        argparse.Namespace,
+        dict[str, dict],
+        argparse.Namespace | None,
+        list[str],
+    ]:
         """Parse arguments.
 
         Args:
             args (list[str], optional): Arguments to parse. Defaults to ``None``.
 
         Returns:
-            tuple[Config, dict[str, dict], list[str]]: Configs from the parsed arguments,
-                                                       parsed yaml configs, and unknown arguments.
+            tuple[
+                dict[str, Any] | Any,
+                dict[str, Any],
+                argparse.Namespace,
+                dict[str, dict],
+                argparse.Namespace | None,
+                list[str]
+            ]:
+                Configs from the parsed arguments, extra arguments,
+                unused loaded configs, unused parsed arguments, and unknown arguments.
         """
-        parser = omniconfig.ConfigParser("Evaluate Quantized Model")
-        parser.add_config(Config)
-        config, parsed_args, unknown_args = parser.parse_known_args(args)
-        assert isinstance(config, Config)
-        return config, parsed_args, unknown_args
 
     @staticmethod
     def dump_default(path: str = "default.yaml") -> None:
@@ -124,13 +122,41 @@ class Config:
         parser.add_config(Config)
         parser.dump_default(path)
 
-def main(args: Any = None) -> None:  # noqa: C901
+
+@omniconfig.configclass
+@dataclass
+class ExtraConfig:
+    """Extra Config class.
+
+    Attributes:
+        test (`bool`, *optional*, default=`False`):
+            Test flag.
+    """
+
+    test: bool = False
+    name: str = "extra"
+
+
+def main(args: tp.Any = None) -> None:  # noqa: C901
     """Evaluate Quantized Model with the given arguments.
 
     Args:
         args (list[str], optional): Arguments to parse. Defaults to ``None``.
     """
-    config, parsed_args, unknown_args = Config.parse_args(args)
+    parser = omniconfig.ConfigParser("Evaluate Quantized Model")
+    parser.add_config(Config)
+    parser.add_config(ExtraConfig, scope="extra")
+    parser.add_extra_argument("--hello", type=int, default=0)
+    parser._parser.add_argument("--unused-arg", type=int, default=0)
+    configs, extra_args, unused_configs, unused_args, unknown_args = parser.parse_known_args(args)
+    assert isinstance(configs[""], Config)
+    assert isinstance(configs["extra"], ExtraConfig)
+    print(f"Configs: {configs}")
+    print(f"Extra Args: {extra_args}")
+    print(f"Unused Configs: {unused_configs}")
+    print(f"Unused Args: {unused_args}")
+    print(f"Unknown Args: {unknown_args}")
+    return configs, extra_args, unused_configs, unused_args, unknown_args
 
 
 if __name__ == "__main__":

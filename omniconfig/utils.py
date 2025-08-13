@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 """Utils for omniconfig."""
+
+import argparse
 import types
 import typing
+from dataclasses import MISSING, InitVar
 from enum import Enum
 
 import toml
@@ -18,6 +21,7 @@ __all__ = [
     "dump_yaml",
     "load_toml",
     "dump_toml",
+    "BooleanOptionalAction",
 ]
 
 
@@ -33,6 +37,8 @@ def parse_field_type(tp: typing.Any) -> tuple[typing.Any, bool]:
     Returns:
         tuple[typing.Any, bool]: The parsed type and whether it is optional.
     """
+    if isinstance(tp, InitVar):
+        tp = tp.type
     if hasattr(tp, "__origin__"):
         if tp.__origin__ is typing.Union:
             ntp = tuple(arg for arg in tp.__args__ if arg is not type(None))
@@ -166,7 +172,8 @@ def dump_yaml(
             Dumper.add_representer(
                 None,
                 lambda self, data: self.represent_scalar(
-                    "tag:yaml.org,2002:str", data.name if isinstance(data, Enum) else str(data)
+                    "tag:yaml.org,2002:str",
+                    data.name if isinstance(data, Enum) else "MISSING" if data is MISSING else str(data),
                 ),
             )
         if ignore_aliases:
@@ -206,3 +213,63 @@ def dump_toml(obj: typing.Any, /, path: str = None) -> str:
         return toml.dumps(obj)
     with open(path, "w", encoding="utf-8") as f:
         toml.dump(obj, f)
+
+
+class BooleanOptionalAction(argparse.Action):
+    def __init__(
+        self,
+        option_strings: list[str],
+        dest: str,
+        default: bool | None = None,
+        required: bool = False,
+        help: str | None = None,
+        metavar: str | None = None,
+        invert: bool = False,
+        opposite_flags: bool = False,
+    ):
+        _option_strings = []
+        value_map = {}
+        for option_string in option_strings:
+            assert option_string.startswith("-")
+            _option_strings.append(option_string)
+            value_map[option_string] = not invert
+            if opposite_flags and option_string.startswith("--"):
+                if option_string.startswith("--enable-"):
+                    option_string = "--dis" + option_string[4:]
+                elif option_string.startswith("--disable-"):
+                    option_string = "--en" + option_string[5:]
+                elif option_string.startswith("--no-"):
+                    option_string = "--" + option_string[5:]
+                else:
+                    option_string = "--no-" + option_string[2:]
+                _option_strings.append(option_string)
+                value_map[option_string] = invert
+
+        super().__init__(
+            option_strings=_option_strings,
+            dest=dest,
+            nargs="?",
+            default=default,
+            type=str,
+            choices=["true", "false"],
+            required=required,
+            help=help,
+            metavar=metavar,
+        )
+        self.value_map = value_map
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: str,
+        option_string: str | None = None,
+    ):
+        if values is None:
+            setattr(namespace, self.dest, self.value_map[option_string])
+        elif values == "true":
+            setattr(namespace, self.dest, self.value_map[option_string])
+        elif values == "false":
+            setattr(namespace, self.dest, not self.value_map[option_string])
+        else:
+            parser.error(f"Invalid value {values!r} for {option_string!r}")

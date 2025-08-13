@@ -13,6 +13,7 @@ import docstring_parser
 from .args import Arguments, _format_prefix_to_flag
 from .utils import (
     CONFIG_SUFFIXES,
+    BooleanOptionalAction,
     dump_toml,
     dump_yaml,
     format_scope_and_prefix,
@@ -53,13 +54,13 @@ def configclass(cls: Type[_T], /) -> Type[_T]:
     """  # noqa: D401
     _set_field_docs(cls)
     if not hasattr(cls, "get_arguments"):
-        setattr(cls, "get_arguments", classmethod(get_arguments))
+        setattr(cls, "get_arguments", classmethod(get_arguments))  # noqa: B010
     if not hasattr(cls, "from_dict"):
-        setattr(cls, "from_dict", classmethod(from_dict))
+        setattr(cls, "from_dict", classmethod(from_dict))  # noqa: B010
     if not hasattr(cls, "formatted_str"):
-        setattr(cls, "formatted_str", formatted_str)
+        setattr(cls, "formatted_str", formatted_str)  # noqa: B010
     if not hasattr(cls, "dump"):
-        setattr(cls, "dump", dump)
+        setattr(cls, "dump", dump)  # noqa: B010
     return cls
 
 
@@ -155,19 +156,13 @@ def get_arguments(  # noqa: C901
                         default = field.default_factory()
                 else:
                     default = field.default
-                if default is None:  # default is not enable
-                    parser.add_argument(
-                        f"--enable-{_format_prefix_to_flag(_prefix)}",
-                        action="store_true",
-                        help=f"Enable {_dest}.",
-                    )
-                else:  # default is enable
-                    parser.add_argument(
-                        f"--disable-{_format_prefix_to_flag(_prefix)}",
-                        action="store_false",
-                        dest=f"enable_{_prefix}",
-                        help=f"Enable {_dest}.",
-                    )
+                parser.add_argument(
+                    f"--enable-{_format_prefix_to_flag(_prefix)}",
+                    dest=f"enable_{_prefix}",
+                    action=BooleanOptionalAction,
+                    help=f"Enable {_dest}.",
+                    default=default is not None,
+                )
             _n = len(_prefix) + (1 if _prefix else 0)
             parser.add_arguments(
                 field_type.get_arguments(
@@ -203,20 +198,18 @@ def get_arguments(  # noqa: C901
         # get action from default value
         _flag = f"--{_dest.replace('_', '-') if _dest[0] != '_' else _dest}"
         if field_type is bool:
-            action = _kwargs.get("action", MISSING)
+            action = _kwargs.pop("action", MISSING)
             if _default:
                 assert action in (MISSING, "store_false"), (
                     f"Invalid action {action} for field {field.name} in {cls.__name__}. "
                     f"Action should be 'store_false' for default True."
                 )
-                _kwargs["action"] = "store_false"
-                _flag = f"--no-{_flag[2:]}"
             else:
                 assert action in (MISSING, "store_true"), (
                     f"Invalid action {action} for field {field.name} in {cls.__name__}. "
                     f"Action should be 'store_true' for default False."
                 )
-                _kwargs["action"] = "store_true"
+            _kwargs["action"] = BooleanOptionalAction
             _kwargs.pop("type", None)
         # get flag from field name
         _flags = tuple(set(field.metadata.get(ARGPARSE_ARGS, [_flag])))
@@ -227,7 +220,7 @@ def get_arguments(  # noqa: C901
             _kwargs["type"] = field_type
         elif issubclass(field_type, Enum):
             _kwargs["type"] = lambda x, field_type=field_type: field_type[x.split(".")[-1]]
-            _kwargs["choices"] = [e for e in field_type]
+            _kwargs["choices"] = list(field_type)
         elif isinstance(field_type, type) and hasattr(field_type, "from_str"):
             _kwargs["type"] = field_type.from_str
         else:
@@ -369,10 +362,11 @@ def ADD_PREFIX_BOOL_FIELDS(prefix: str, **defaults) -> Callable[[Arguments], Non
                 k = k[len(prefix_) :]
                 uk = k.replace("_", "-") if k[0] != "_" else k
                 parser.add_argument(
-                    f"--no-{prefix}-{uk}" if v else f"--{prefix}-{uk}",
-                    action="store_false" if v else "store_true",
+                    f"--{prefix}-{uk}",
+                    action=BooleanOptionalAction,
                     dest=f"{prefix}_{k}",
                     help=f"Whether to {prefix} {k}.",
+                    default=v,
                 )
 
     return fn
@@ -388,4 +382,4 @@ def COLLECT_PREFIX_BOOL_FIELDS(
     results = {k[len(prefix_) :]: v for k, v in parsed_args.items() if k.startswith(prefix_)}
     if return_as_dict:
         return results
-    return list(k for k, v in results.items() if v)
+    return [k for k, v in results.items() if v]
