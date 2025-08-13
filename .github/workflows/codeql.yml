@@ -1,10 +1,9 @@
 name: CodeQL Analysis
 
 on:
-  push:
-    branches: [ main, dev, "dev/*" ]
   pull_request:
     branches: [ main ]
+    types: [opened, synchronize, reopened, ready_for_review]
   schedule:
     - cron: '30 5 * * 1'  # Every Monday at 5:30 AM
 
@@ -17,6 +16,7 @@ jobs:
   analyze:
     name: Analyze Python Code
     runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event.pull_request.draft == false
     
     strategy:
       fail-fast: false

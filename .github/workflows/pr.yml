@@ -2,7 +2,8 @@ name: PR Checks
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    branches: [ main ]
+    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: read
@@ -13,6 +14,7 @@ jobs:
   check-commits:
     name: Check Commit Messages
     runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
     
     steps:
     - uses: actions/checkout@v4
@@ -46,6 +48,7 @@ jobs:
   check-size:
     name: Check PR Size
     runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
     
     steps:
     - uses: actions/checkout@v4
@@ -72,6 +75,7 @@ jobs:
   label-pr:
     name: Auto Label PR
     runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
     
     steps:
     - uses: actions/checkout@v4
@@ -141,6 +145,7 @@ jobs:
   coverage-comment:
     name: Post Coverage Comment
     runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
     
     steps:
     - uses: actions/checkout@v4

@@ -1,16 +1,16 @@
 name: CI
 
 on:
-  push:
-    branches: [ main, dev, "dev/*" ]
   pull_request:
     branches: [ main ]
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
 jobs:
   test:
     name: Test Python ${{ matrix.python-version }}
     runs-on: ${{ matrix.os }}
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
     strategy:
       fail-fast: false
       matrix:
@@ -54,6 +54,7 @@ jobs:
   lint:
     name: Lint and Format Check
     runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
     
     steps:
     - uses: actions/checkout@v4
@@ -81,6 +82,7 @@ jobs:
   docs:
     name: Build Documentation
     runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
     
     steps:
     - uses: actions/checkout@v4
@@ -117,6 +119,7 @@ jobs:
   security:
     name: Security Check
     runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
     
     steps:
     - uses: actions/checkout@v4
@@ -146,6 +149,7 @@ jobs:
   build:
     name: Build Distribution
     runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
     
     steps:
     - uses: actions/checkout@v4
