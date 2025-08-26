@@ -1,46 +1,47 @@
 """Tests for ResolutionNode implementation."""
 
 from dataclasses import MISSING, dataclass, field
-from typing import Dict, List, Optional
+from typing import Any, ClassVar, Dict, List, Optional, cast
 
 import pytest
 
 from omniconfig.core.exceptions import ConfigParseError, ConfigReferenceError
+from omniconfig.core.registry import RegistryMixin
 from omniconfig.core.types import TypeInfo
 from omniconfig.resolution.node import ResolutionNode
 
 
 @dataclass
-class SimpleConfig:
-    """Simple test config."""
+class UserSettings:
+    """User settings configuration."""
 
-    name: str
-    value: int = 42
-
-
-@dataclass
-class NestedConfig:
-    """Nested test config."""
-
-    title: str
-    simple: SimpleConfig
-    optional: Optional[int] = None
+    username: str
+    user_id: int = 1001
 
 
 @dataclass
-class ListConfig:
-    """Config with list fields."""
+class ApplicationSettings:
+    """Application settings with nested components."""
 
-    items: List[str]
-    numbers: List[int] = field(default_factory=list)
+    app_name: str
+    user_config: UserSettings
+    max_retries: Optional[int] = None
 
 
 @dataclass
-class DictConfig:
-    """Config with dict fields."""
+class NotificationConfig:
+    """Configuration for notification system."""
 
-    mapping: Dict[str, int]
-    options: Dict[str, str] = field(default_factory=dict)
+    email_recipients: List[str]
+    retry_intervals: List[int] = field(default_factory=list)
+
+
+@dataclass
+class FeatureToggleConfig:
+    """Feature toggle configuration."""
+
+    feature_limits: Dict[str, int]
+    feature_settings: Dict[str, str] = field(default_factory=dict)
 
 
 class TestResolutionNodeCreation:
@@ -144,14 +145,14 @@ class TestResolutionNodeCreation:
     def test_factoried_node(self):
         """Test factoried node state."""
         node = ResolutionNode(
-            content={"name": ResolutionNode(content="test", path=("config", "name"))},
+            content={"username": ResolutionNode(content="testuser", path=("config", "username"))},
             path=("config",),
         )
         assert not node.is_factoried
 
-        node.value = SimpleConfig(name="test")
+        node.value = UserSettings(username="testuser")
         assert node.is_factoried
-        assert isinstance(node.value, SimpleConfig)
+        assert isinstance(node.value, UserSettings)
 
 
 class TestResolutionNodeReferences:
@@ -323,10 +324,10 @@ class TestResolutionNodeMaterialize:
     def test_materialize_factoried(self):
         """Test materializing factoried node."""
         node = ResolutionNode(
-            content={"name": ResolutionNode(content="test", path=("config", "name"))},
+            content={"username": ResolutionNode(content="testuser", path=("config", "username"))},
             path=("config",),
         )
-        node.value = SimpleConfig(name="test")
+        node.value = UserSettings(username="testuser")
 
         assert node.materialize(after_factory=True) == node.value
         assert isinstance(node.materialize(after_factory=False), dict)
@@ -408,6 +409,114 @@ class TestResolutionNodeBuild:
         assert isinstance(node.content["items"].content, list)
         assert len(node.content["items"].content) == 2
 
+    def test_build_registry(self):
+        from omniconfig import OmniConfig
+
+        class UrlValidator:
+            def __init__(self, port: int):
+                self.url = f"http://localhost:{port}"
+
+            def to_port(self) -> int:
+                return int(self.url.split(":")[-1])
+
+        OmniConfig.register_type(
+            UrlValidator, type_hint=int, factory=UrlValidator, reducer=lambda x: x.to_port()
+        )
+
+        class PluginConfig(RegistryMixin):
+            _REGISTRY_NAME_FIELD: ClassVar[str] = "plugin_type"
+
+            @staticmethod
+            def from_dict(kwargs: Dict[str, Any]):
+                cls = PluginConfig.retrieve(
+                    name=kwargs.pop(PluginConfig._REGISTRY_NAME_FIELD),
+                    subregistry=kwargs.pop(PluginConfig._REGISTRY_SUBREGISTRY_FIELD, ""),
+                )
+                cls = cast(type[PluginConfig], cls)
+                return cls(**kwargs)
+
+        OmniConfig.register_type(
+            PluginConfig, type_hint=Dict, factory=PluginConfig.from_dict, reducer=str
+        )
+
+        @PluginConfig.register(name="database")
+        @dataclass
+        class DatabasePluginConfig(PluginConfig):
+            validator: UrlValidator
+
+        node = ResolutionNode.build(
+            {"config": {"plugin_type": "database", "validator": 15}},
+            type_infos={("config",): OmniConfig.retrieve_type_info(PluginConfig)},  # type: ignore
+        )
+
+        assert isinstance(node.content, dict)
+        config_node = node.content["config"]
+        config_type_chain = config_node.type_chains[-1]
+        assert config_type_chain[-1].custom is not None
+        assert config_type_chain[-1].type_ is Dict
+        assert config_type_chain[-1].custom.type_hint is DatabasePluginConfig
+        assert isinstance(config_node.content, dict)
+        custom_node = config_node.content["validator"]
+        custom_type_chain = custom_node.type_chains[-1]
+        assert custom_type_chain[0] is OmniConfig.retrieve_type_info(UrlValidator)
+
+    def test_build_registry_dataclass(self):
+        from omniconfig import OmniConfig
+
+        class UrlValidator:
+            def __init__(self, port: int):
+                self.url = f"http://localhost:{port}"
+
+            def to_port(self) -> int:
+                return int(self.url.split(":")[-1])
+
+        OmniConfig.register_type(
+            UrlValidator, type_hint=int, factory=UrlValidator, reducer=lambda x: x.to_port()
+        )
+
+        @dataclass
+        class PluginConfig(RegistryMixin):
+            _REGISTRY_NAME_FIELD: ClassVar[str] = "plugin_type"
+
+            name: str
+
+            @staticmethod
+            def from_dict(kwargs: Dict[str, Any]):
+                cls = PluginConfig.retrieve(
+                    name=kwargs.pop(PluginConfig._REGISTRY_NAME_FIELD),
+                    subregistry=kwargs.pop(PluginConfig._REGISTRY_SUBREGISTRY_FIELD, ""),
+                )
+                cls = cast(type[PluginConfig], cls)
+                return cls(**kwargs)
+
+        OmniConfig.register_type(
+            PluginConfig, type_hint=Dict, factory=PluginConfig.from_dict, reducer=str
+        )
+
+        @PluginConfig.register(name="database")
+        @dataclass
+        class DatabasePluginConfig(PluginConfig):
+            validator: UrlValidator
+
+        node = ResolutionNode.build(
+            {"config": {"plugin_type": "database", "name": "test", "validator": 15}},
+            type_infos={("config",): OmniConfig.retrieve_type_info(PluginConfig)},  # type: ignore
+        )
+
+        assert isinstance(node.content, dict)
+        config_node = node.content["config"]
+        config_type_chain = config_node.type_chains[-1]
+        assert config_type_chain[-1].custom is not None
+        assert config_type_chain[-1].type_ is Dict
+        assert config_type_chain[-1].custom.type_hint is DatabasePluginConfig
+        assert isinstance(config_node.content, dict)
+        name_node = config_node.content["name"]
+        name_type_chain = name_node.type_chains[-1]
+        assert name_type_chain[0].type_ is str
+        custom_node = config_node.content["validator"]
+        custom_type_chain = custom_node.type_chains[-1]
+        assert custom_type_chain[0] is OmniConfig.retrieve_type_info(UrlValidator)
+
     def test_build_invalid_reference(self):
         """Test building with invalid reference format."""
         data = {"_reference_": 123}  # Invalid non-string reference
@@ -446,18 +555,20 @@ class TestResolutionNodeSplit:
 
     def test_split_dataclass(self):
         """Test split with dataclass value."""
-        child_name = ResolutionNode(content="test", path=("config", "name"))
-        child_name.value = "test"
-        child_value = ResolutionNode(content=42, path=("config", "value"))
-        child_value.value = 42
+        username_child = ResolutionNode(content="testuser", path=("config", "username"))
+        username_child.value = "testuser"
+        userid_child = ResolutionNode(content=1001, path=("config", "user_id"))
+        userid_child.value = 1001
 
-        node = ResolutionNode(content={"name": child_name, "value": child_value}, path=("config",))
-        node.value = SimpleConfig(name="test", value=42)
+        node = ResolutionNode(
+            content={"username": username_child, "user_id": userid_child}, path=("config",)
+        )
+        node.value = UserSettings(username="testuser", user_id=1001)
 
-        data = {"name": "test", "value": 42, "extra": "unused"}
+        data = {"username": "testuser", "user_id": 1001, "extra": "unused"}
         used, unused = node.split(data)
 
-        assert used == {"name": "test", "value": 42}
+        assert used == {"username": "testuser", "user_id": 1001}
         assert unused == {"extra": "unused"}
 
     def test_split_dict_value(self):

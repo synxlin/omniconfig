@@ -33,6 +33,7 @@ from typing import (
 )
 
 from .exceptions import TypeRegistrationError
+from .registry import RegistryMeta
 from .utils import get_fields, get_fields_docstrings
 
 __all__ = [
@@ -131,11 +132,6 @@ class CustomTypeInfo:
     """Convert from type_hint to type_."""
     reducer: Callable[[Any], Any]
     """Convert from type_ to type_hint for serialization."""
-
-    def __post_init__(self):
-        """Validate that factory and reducer are callable."""
-        if self.factory is None:
-            pass
 
 
 @dataclass
@@ -247,10 +243,6 @@ class TypeSystem:
         if is_primitive_type(type_):
             raise TypeRegistrationError(
                 f"Cannot register primitive type {type_}. Use field metadata for primitive types."
-            )
-        if is_dataclass(type_):
-            raise TypeRegistrationError(
-                f"Cannot register dataclass type {type_}. Use field metadata for dataclasses."
             )
         if is_container_type(type_):
             raise TypeRegistrationError(
@@ -772,50 +764,80 @@ def try_prune_type_chains(  # noqa: C901
         Pruned list of type chains that match the value.
     """
     if isinstance(value, dict):
+        any_chains: List[Tuple[TypeInfo, ...]] = []
         dict_chains: List[Tuple[TypeInfo, ...]] = []
         dataclass_chains: List[Tuple[TypeInfo, ...]] = []
         for chain in type_chains:
             type_ = chain[-1].type_
+            if type_ is Any:
+                any_chains.append(chain)
+                continue
             if is_dataclass(type_):
                 dataclass_chains.append(chain)
                 dict_chains.append(chain)
+                continue
             origin = get_origin(type_)
             if origin in _DICT_CONTAINER_TYPES or type_ in _RAW_DICT_CONTAINER_TYPES:
+                if len(chain) > 1:
+                    type_ = chain[-2].type_
+                    if isinstance(type_, RegistryMeta):
+                        type_ = type_.retrieve(
+                            value.get(type_._REGISTRY_NAME_FIELD, ""),
+                            subregistry=value.get(type_._REGISTRY_SUBREGISTRY_FIELD, ""),
+                        )
+                        if inspect.isclass(type_) and is_dataclass(type_):
+                            chain[-1].custom = CustomTypeInfo(
+                                type_hint=type_, factory=dict, reducer=dict
+                            )
                 dict_chains.append(chain)
+        if len(dict_chains) == 0:
+            return any_chains
         if len(dict_chains) == 1:
             return dict_chains
         if dataclass_chains:
-            matches: List[Tuple[TypeInfo, ...]] = []
+            matched_chains: List[Tuple[TypeInfo, ...]] = []
             for chain in dataclass_chains:
-                cls = chain[-1].type_
+                cls = chain[-1].type_hint
                 required_fields = {
                     f.name
                     for f in get_fields(cls, init_only=True)
                     if f.default is MISSING and f.default_factory is MISSING
                 }
                 if required_fields.issubset(value.keys()):
-                    matches.append(chain)
-            if matches:
-                return matches
+                    matched_chains.append(chain)
+            if matched_chains:
+                return matched_chains
         if len(dict_chains) == len(dataclass_chains):
             return dict_chains
         return [chain for chain in dict_chains if not is_dataclass(chain[-1].type_)]
     elif isinstance(value, list):
-        pruned = []
+        if len(type_chains) == 1:
+            return type_chains
+        any_chains: List[Tuple[TypeInfo, ...]] = []
+        list_chains: List[Tuple[TypeInfo, ...]] = []
         for chain in type_chains:
             type_ = chain[-1].type_
+            if type_ is Any:
+                any_chains.append(chain)
+                continue
             if get_origin(type_) in _LIST_CONTAINER_TYPES or type_ in _RAW_LIST_CONTAINER_TYPES:
-                pruned.append(chain)
-        return pruned
+                list_chains.append(chain)
+        return list_chains or any_chains
     else:
+        if len(type_chains) == 1:
+            return type_chains
         # return all type chains that match the value's type
-        pruned = []
+        any_chains = []
+        matched_chains = []
         for chain in type_chains:
             type_ = chain[-1].type_
+            if type_ is Any:
+                any_chains.append(chain)
+                continue
             if issubclass(type_, enum.Enum):
                 # For enums, check if value is a member
                 if isinstance(value, type_) or value in type_:
-                    pruned.append(chain)
+                    matched_chains.append(chain)
             elif isinstance(value, type_):
-                pruned.append(chain)
-        return pruned
+                matched_chains.append(chain)
+        return matched_chains or any_chains

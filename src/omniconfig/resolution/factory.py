@@ -4,6 +4,7 @@ This module handles type transformation and factory application
 for the node-based resolution system using type chains.
 """
 
+import inspect
 from dataclasses import MISSING, is_dataclass
 from enum import Enum
 from types import MappingProxyType
@@ -177,7 +178,7 @@ class FactorySystem:
             return FactorySystem._convert_primitive(value, target_type, name)
 
         # Enum types
-        if isinstance(target_type, type) and issubclass(target_type, Enum):
+        if inspect.isclass(target_type) and issubclass(target_type, Enum):
             return FactorySystem._convert_enum(value, target_type, name)
 
         # Dataclass types

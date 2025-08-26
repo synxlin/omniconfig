@@ -1,10 +1,12 @@
 """Resolution tree node for OmniConfig."""
 
+import inspect
 from dataclasses import _MISSING_TYPE, MISSING, dataclass, field, is_dataclass
 from typing import Any, Dict, List, Sequence, Set, Tuple, Union
 
 from ..core.exceptions import ConfigParseError, ConfigReferenceError
 from ..core.reference import is_reference_format, path_to_reference
+from ..core.registry import RegistryMeta
 from ..core.types import _GLOBAL_TYPE_SYSTEM, TypeInfo, TypeSystem, try_prune_type_chains
 from ..core.utils import get_fields
 
@@ -227,7 +229,7 @@ class ResolutionNode:
         return ResolutionNode(
             content=new_content,
             value=MISSING,
-            type_chains=update_node.type_chains,
+            type_chains=self.type_chains,
             path=update_node.path,
             aliases=update_node.aliases,
         )
@@ -331,7 +333,7 @@ class ResolutionNode:
             type_chains = []
 
         # Try to prune type chains for non-reference values
-        if not bool(reference) and len(type_chains) > 1:
+        if not bool(reference):
             type_chains = try_prune_type_chains(data, type_chains=type_chains)
 
         if isinstance(data, dict):
@@ -397,20 +399,38 @@ class ResolutionNode:
             raise ConfigParseError("Cannot split used/unused data based on a non-factoried node.")
         if not isinstance(data, (dict, list)):
             return data, MISSING
-        if is_dataclass(self.value):
+        if is_dataclass(self.value) and not inspect.isclass(self.value):
             cls = type(self.value)
             if not isinstance(data, dict):
-                raise ConfigParseError(
-                    f"Expected dict data for {cls} at {self.name}, got {type(data)}"
-                )
-            unused_keys = {k for k in data.keys() if k not in ("_reference_", "_overwrite_")}
+                return data, MISSING
+            unused_keys = set(data.keys())
+            used, unused = {}, {}
+            if len(self.type_chains) >= 1:
+                type_chain = self.type_chains[0]
+                if len(type_chain) > 1:
+                    if type_chain[-1].custom is not None:
+                        if len(type_chain) < 2:
+                            raise ConfigParseError("Invalid type chain length.")
+                        type_ = type_chain[-2].type_
+                        if not isinstance(type_, RegistryMeta):
+                            raise ConfigParseError("Expected RegistryMeta type.")
+                        for field_name in (
+                            type_._REGISTRY_NAME_FIELD,
+                            type_._REGISTRY_SUBREGISTRY_FIELD,
+                        ):
+                            if field_name in data:
+                                unused_keys.discard(field_name)
+                                used[field_name] = data[field_name]
+            for field_name in ("_reference_", "_overwrite_"):
+                if field_name in data:
+                    unused_keys.discard(field_name)
+                    used[field_name] = data[field_name]
             if not unused_keys:
                 return data, MISSING
             if not isinstance(self.content, dict):
                 raise ConfigParseError(
                     f"Expected dict content for {cls} at {self.name}, got {type(self.content)}"
                 )
-            used, unused = {}, {}
             for field in get_fields(cls, init_only=True, exclude_pseudo=False):
                 if field.name in data:
                     field_used, field_unused = self.content[field.name].split(
@@ -430,14 +450,18 @@ class ResolutionNode:
                 raise ConfigParseError(
                     f"Expected dict data for dict value at {self.name}, got {type(data)}"
                 )
-            keys = {k for k in data.keys() if k not in ("_reference_", "_overwrite_")}
+            keys = set(data.keys())
+            used, unused = {}, {}
+            for key in ("_reference_", "_overwrite_"):
+                if key in data:
+                    keys.discard(key)
+                    used[key] = data[key]
             if not keys:
                 return data, MISSING
             if not isinstance(self.content, dict):
                 raise ConfigParseError(
                     f"Expected dict content for dict at {self.name}, got {type(self.content)}"
                 )
-            used, unused = {}, {}
             for key in keys:
                 if key in self.content:
                     key_used, key_unused = self.content[key].split(data=data[key])
@@ -449,12 +473,17 @@ class ResolutionNode:
                     unused[key] = data[key]
             return used if used else MISSING, unused if unused else MISSING
         elif isinstance(self.value, list):
+            used, unused = {}, {}
             if not isinstance(self.content, list):
                 raise ConfigParseError(
                     f"Expected list content for list at {self.name}, got {type(self.content)}"
                 )
             if isinstance(data, dict):
-                keys = {k for k in data.keys() if k not in ("_reference_", "_overwrite_")}
+                keys = set(data.keys())
+                for key in ("_reference_", "_overwrite_"):
+                    if key in data:
+                        keys.discard(key)
+                        used[key] = data[key]
             elif isinstance(data, list):
                 keys = set(range(len(data)))
             else:
@@ -463,7 +492,6 @@ class ResolutionNode:
                 )
             if not keys:
                 return data, MISSING
-            used, unused = {}, {}
             for key in keys:
                 if key < len(self.content):
                     key_used, key_unused = self.content[key].split(data=data[key])  # type: ignore

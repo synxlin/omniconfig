@@ -1,9 +1,9 @@
 """Tests for FactorySystem implementation."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from types import MappingProxyType
-from typing import Any, List, Optional
+from typing import Any, ClassVar, Dict, List, Optional, cast
 
 import pytest
 
@@ -13,8 +13,8 @@ from omniconfig.resolution.factory import FactorySystem
 from omniconfig.resolution.node import ResolutionNode
 
 
-class Color(Enum):
-    """Test enum."""
+class ProductColor(Enum):
+    """Product color options for e-commerce system."""
 
     RED = "red"
     GREEN = "green"
@@ -22,30 +22,30 @@ class Color(Enum):
 
 
 @dataclass
-class SimpleConfig:
-    """Simple test config."""
+class DatabaseConfig:
+    """Database connection configuration."""
 
-    name: str
-    value: int = 42
+    hostname: str
+    port: int = 5432
 
 
 @dataclass
-class NestedConfig:
-    """Nested test config."""
+class ApplicationConfig:
+    """Application configuration with nested components."""
 
-    title: str
-    simple: SimpleConfig
-    count: Optional[int] = None
+    service_name: str
+    database: DatabaseConfig
+    max_connections: Optional[int] = None
 
 
-class CustomClass:
-    """Custom class for testing custom factories."""
+class EmailValidator:
+    """Email validation service for testing custom factories."""
 
-    def __init__(self, data: str):
-        self.data = data
+    def __init__(self, domain: str):
+        self.domain = domain
 
     def __eq__(self, other):
-        return isinstance(other, CustomClass) and self.data == other.data
+        return isinstance(other, EmailValidator) and self.domain == other.domain
 
 
 class TestFactorySystemPrimitives:
@@ -177,28 +177,28 @@ class TestFactorySystemEnums:
     def test_enum_by_name(self):
         """Test enum conversion by name."""
         node = ResolutionNode(content="RED", path=("color",))
-        node.type_chains = [(TypeInfo(type_=Color),)]
+        node.type_chains = [(TypeInfo(type_=ProductColor),)]
         FactorySystem.apply(node)
-        assert node.value == Color.RED
+        assert node.value == ProductColor.RED
 
     def test_enum_by_value(self):
         """Test enum conversion by value."""
         node = ResolutionNode(content="green", path=("color",))
-        node.type_chains = [(TypeInfo(type_=Color),)]
+        node.type_chains = [(TypeInfo(type_=ProductColor),)]
         FactorySystem.apply(node)
-        assert node.value == Color.GREEN
+        assert node.value == ProductColor.GREEN
 
     def test_enum_already_enum(self):
         """Test when value is already the enum type."""
         node = ResolutionNode(content="BLUE", path=("color",))
-        node.type_chains = [(TypeInfo(type_=Color),)]
+        node.type_chains = [(TypeInfo(type_=ProductColor),)]
         FactorySystem.apply(node)
-        assert node.value == Color.BLUE
+        assert node.value == ProductColor.BLUE
 
     def test_enum_invalid_value(self):
         """Test invalid enum value."""
         node = ResolutionNode(content="yellow", path=("color",))
-        node.type_chains = [(TypeInfo(type_=Color),)]
+        node.type_chains = [(TypeInfo(type_=ProductColor),)]
         with pytest.raises(ConfigFactoryError, match="Cannot convert"):
             FactorySystem.apply(node)
 
@@ -307,82 +307,87 @@ class TestFactorySystemDataclasses:
 
     def test_simple_dataclass(self):
         """Test simple dataclass creation."""
-        name_child = ResolutionNode(content="test", path=("config", "name"))
-        name_child.value = "test"
-        value_child = ResolutionNode(content=50, path=("config", "value"))
-        value_child.value = 50
+        hostname_child = ResolutionNode(content="localhost", path=("config", "hostname"))
+        hostname_child.value = "localhost"
+        port_child = ResolutionNode(content=5432, path=("config", "port"))
+        port_child.value = 5432
 
-        node = ResolutionNode(content={"name": name_child, "value": value_child}, path=("config",))
-        node.type_chains = [(TypeInfo(type_=SimpleConfig),)]
+        node = ResolutionNode(
+            content={"hostname": hostname_child, "port": port_child}, path=("config",)
+        )
+        node.type_chains = [(TypeInfo(type_=DatabaseConfig),)]
 
         FactorySystem.apply(node)
-        assert isinstance(node.value, SimpleConfig)
-        assert node.value.name == "test"
-        assert node.value.value == 50
+        assert isinstance(node.value, DatabaseConfig)
+        assert node.value.hostname == "localhost"
+        assert node.value.port == 5432
 
     def test_dataclass_with_defaults(self):
         """Test dataclass with default values."""
-        name_child = ResolutionNode(content="test", path=("config", "name"))
-        name_child.value = "test"
+        hostname_child = ResolutionNode(content="localhost", path=("config", "hostname"))
+        hostname_child.value = "localhost"
 
-        node = ResolutionNode(content={"name": name_child}, path=("config",))
-        node.type_chains = [(TypeInfo(type_=SimpleConfig),)]
+        node = ResolutionNode(content={"hostname": hostname_child}, path=("config",))
+        node.type_chains = [(TypeInfo(type_=DatabaseConfig),)]
 
         FactorySystem.apply(node)
-        assert isinstance(node.value, SimpleConfig)
-        assert node.value.name == "test"
-        assert node.value.value == 42  # Default value
+        assert isinstance(node.value, DatabaseConfig)
+        assert node.value.hostname == "localhost"
+        assert node.value.port == 5432  # Default value
 
     def test_nested_dataclass(self):
         """Test nested dataclass creation."""
-        # Create inner SimpleConfig
-        inner_name = ResolutionNode(content="inner", path=("config", "simple", "name"))
-        inner_name.value = "inner"
-        inner_value = ResolutionNode(content=100, path=("config", "simple", "value"))
-        inner_value.value = 100
-        simple_node = ResolutionNode(
-            content={"name": inner_name, "value": inner_value}, path=("config", "simple")
+        # Create inner DatabaseConfig
+        inner_hostname = ResolutionNode(
+            content="db.internal", path=("config", "database", "hostname")
         )
-        simple_node.value = SimpleConfig(name="inner", value=100)
+        inner_hostname.value = "db.internal"
+        inner_port = ResolutionNode(content=3306, path=("config", "database", "port"))
+        inner_port.value = 3306
+        database_node = ResolutionNode(
+            content={"hostname": inner_hostname, "port": inner_port}, path=("config", "database")
+        )
+        database_node.value = DatabaseConfig(hostname="db.internal", port=3306)
 
-        # Create outer NestedConfig
-        title_node = ResolutionNode(content="outer", path=("config", "title"))
-        title_node.value = "outer"
+        # Create outer ApplicationConfig
+        service_name_node = ResolutionNode(content="api-service", path=("config", "service_name"))
+        service_name_node.value = "api-service"
 
         node = ResolutionNode(
-            content={"title": title_node, "simple": simple_node}, path=("config",)
+            content={"service_name": service_name_node, "database": database_node},
+            path=("config",),
         )
-        node.type_chains = [(TypeInfo(type_=NestedConfig),)]
+        node.type_chains = [(TypeInfo(type_=ApplicationConfig),)]
 
         FactorySystem.apply(node)
-        assert isinstance(node.value, NestedConfig)
-        assert node.value.title == "outer"
-        assert isinstance(node.value.simple, SimpleConfig)
-        assert node.value.simple.name == "inner"
+        assert isinstance(node.value, ApplicationConfig)
+        assert node.value.service_name == "api-service"
+        assert isinstance(node.value.database, DatabaseConfig)
+        assert node.value.database.hostname == "db.internal"
 
     def test_dataclass_missing_required(self):
         """Test dataclass with missing required field."""
-        # Missing 'name' field
-        value_child = ResolutionNode(content=50, path=("config", "value"))
-        value_child.value = 50
+        # Missing 'hostname' field
+        port_child = ResolutionNode(content=5432, path=("config", "port"))
+        port_child.value = 5432
 
-        node = ResolutionNode(content={"value": value_child}, path=("config",))
-        node.type_chains = [(TypeInfo(type_=SimpleConfig),)]
+        node = ResolutionNode(content={"port": port_child}, path=("config",))
+        node.type_chains = [(TypeInfo(type_=DatabaseConfig),)]
 
         with pytest.raises(ConfigFactoryError, match="Missing required field"):
             FactorySystem.apply(node)
 
     def test_dataclass_already_instance(self):
         """Test when value is already a dataclass instance."""
-        existing = SimpleConfig(name="existing", value=999)
+        existing = DatabaseConfig(hostname="db.example.com", port=3306)
         node = ResolutionNode(
             content={
-                "name": ResolutionNode(content="existing", path=("config", "name")),
-                "value": ResolutionNode(content=999, path=("config", "value")),
+                "hostname": ResolutionNode(content="db.example.com", path=("config", "hostname")),
+                "port": ResolutionNode(content=3306, path=("config", "port")),
             },
             path=("config",),
         )
-        node.type_chains = [(TypeInfo(type_=SimpleConfig),)]
+        node.type_chains = [(TypeInfo(type_=DatabaseConfig),)]
 
         FactorySystem.apply(node)
         assert node.value == existing  # Should not change the existing instance
@@ -390,7 +395,7 @@ class TestFactorySystemDataclasses:
     def test_dataclass_from_non_dict(self):
         """Test creating dataclass from non-dict raises error."""
         node = ResolutionNode(content="not_a_dict", path=("config",))
-        node.type_chains = [(TypeInfo(type_=SimpleConfig),)]
+        node.type_chains = [(TypeInfo(type_=DatabaseConfig),)]
 
         with pytest.raises(ConfigFactoryError, match="Cannot create"):
             FactorySystem.apply(node)
@@ -398,16 +403,16 @@ class TestFactorySystemDataclasses:
     def test_dataclass_creation_error(self):
         """Test handling of dataclass creation errors."""
         # Create node with wrong type for field
-        name_child = ResolutionNode(content=123, path=("config", "name"))  # Wrong type
-        name_child.type_chains = [(TypeInfo(type_=str),)]
-        FactorySystem.apply(name_child)
+        hostname_child = ResolutionNode(content=123, path=("config", "hostname"))  # Wrong type
+        hostname_child.type_chains = [(TypeInfo(type_=str),)]
+        FactorySystem.apply(hostname_child)
 
-        node = ResolutionNode(content={"name": name_child}, path=("config",))
-        node.type_chains = [(TypeInfo(type_=SimpleConfig),)]
+        node = ResolutionNode(content={"hostname": hostname_child}, path=("config",))
+        node.type_chains = [(TypeInfo(type_=DatabaseConfig),)]
 
         # Should succeed as dataclass will handle conversion
         FactorySystem.apply(node)
-        assert node.value.name == "123"  # Converted to string
+        assert node.value.hostname == "123"  # Converted to string
 
 
 class TestFactorySystemCustomTypes:
@@ -416,16 +421,18 @@ class TestFactorySystemCustomTypes:
     def test_custom_factory(self):
         """Test custom factory function."""
         custom_type = CustomTypeInfo(
-            type_hint=str, factory=lambda x: CustomClass(f"custom_{x}"), reducer=lambda x: x.data
+            type_hint=str,
+            factory=lambda x: EmailValidator(f"{x}.example.com"),
+            reducer=lambda x: x.domain,
         )
-        type_info = TypeInfo(type_=CustomClass, custom=custom_type)
+        type_info = TypeInfo(type_=EmailValidator, custom=custom_type)
 
-        node = ResolutionNode(content="input", path=("custom",))
+        node = ResolutionNode(content="noreply", path=("custom",))
         node.type_chains = [(type_info,)]
 
         FactorySystem.apply(node)
-        assert isinstance(node.value, CustomClass)
-        assert node.value.data == "custom_input"
+        assert isinstance(node.value, EmailValidator)
+        assert node.value.domain == "noreply.example.com"
 
     def test_custom_factory_error(self):
         """Test custom factory error handling."""
@@ -434,7 +441,7 @@ class TestFactorySystemCustomTypes:
             raise ValueError("Custom factory failed")
 
         custom_type = CustomTypeInfo(type_hint=str, factory=bad_factory, reducer=lambda x: x)
-        type_info = TypeInfo(type_=CustomClass, custom=custom_type)
+        type_info = TypeInfo(type_=EmailValidator, custom=custom_type)
 
         node = ResolutionNode(content="input", path=("custom",))
         node.type_chains = [(type_info,)]
@@ -570,6 +577,228 @@ class TestFactorySystemRecursion:
             FactorySystem.apply(node)
 
 
+class TestFactorySystemRegistry:
+    """Test registry-based configurations with FactorySystem."""
+
+    def test_registry_config_factory(self):
+        """Test factory application with registry-based configs."""
+
+        from omniconfig import OmniConfig
+        from omniconfig.core.registry import RegistryMixin
+
+        # Define a custom class to register
+        class NetworkEndpoint:
+            def __init__(self, port: int):
+                self.address = f"192.168.0.1:{port}"
+
+            def to_port(self) -> int:
+                return int(self.address.split(":")[-1])
+
+            def __eq__(self, other):
+                return isinstance(other, NetworkEndpoint) and self.address == other.address
+
+        # Register the custom type
+        OmniConfig.register_type(
+            NetworkEndpoint,
+            type_hint=int,
+            factory=NetworkEndpoint,
+            reducer=lambda x: x.to_port(),
+        )
+
+        # Define FeatureFlagsConfig for optional fields
+        @dataclass
+        class FeatureFlagsConfig:
+            feature_flags: dict[str, bool] = field(default_factory=dict)
+
+        # Create a registry-based configuration
+        class BaseServiceConfig(RegistryMixin):
+            _REGISTRY_NAME_FIELD: ClassVar[str] = "service_type"
+            _REGISTRY_SUBREGISTRY_FIELD: ClassVar[str] = "environment"
+
+            @staticmethod
+            def from_dict(kwargs: Dict[str, Any]):
+                service_type = kwargs.pop(BaseServiceConfig._REGISTRY_NAME_FIELD, None)
+                environment = kwargs.pop(BaseServiceConfig._REGISTRY_SUBREGISTRY_FIELD, "")
+
+                if service_type:
+                    cls = BaseServiceConfig.retrieve(name=service_type, subregistry=environment)
+                    cls = cast(type[BaseServiceConfig], cls)
+                    # Support dynamic skip field mixing
+                    if "feature_flags" in kwargs:
+                        cls = dataclass(
+                            type(f"Feature{cls.__name__}", (FeatureFlagsConfig, cls), {}),
+                            kw_only=True,
+                        )
+                    return cls(**kwargs)
+                raise ValueError("Service type not specified")
+
+        # Register with OmniConfig
+        OmniConfig.register_type(
+            BaseServiceConfig,
+            type_hint=Dict,
+            factory=BaseServiceConfig.from_dict,
+            reducer=lambda x: {"service_type": type(x).__name__.replace("Feature", "")},
+        )
+
+        # Define and register a concrete implementation
+        @BaseServiceConfig.register(name="http")
+        @dataclass
+        class HttpServiceConfig(BaseServiceConfig):
+            endpoint: NetworkEndpoint
+            timeout_seconds: int = 30
+
+        # Build the node tree using ResolutionNode.build
+        data = {
+            "config": {
+                "service_type": "http",
+                "endpoint": 8080,
+                "timeout_seconds": 60,
+                "feature_flags": {"validation": True, "logging": False},
+            }
+        }
+
+        # Build the tree
+        root = ResolutionNode.build(
+            data,
+            type_infos={("config",): OmniConfig.retrieve_type_info(BaseServiceConfig)},  # type: ignore
+        )
+
+        # Apply factory to the tree
+        FactorySystem.apply(root)
+
+        # Verify the results
+        assert root.is_factoried
+        assert isinstance(root.content, dict)
+        assert "config" in root.content
+
+        config_node = root.content["config"]
+        assert config_node.is_factoried
+        # The actual class will be SkipHttpServiceConfig
+        assert isinstance(config_node.value, HttpServiceConfig)
+        assert isinstance(config_node.value.endpoint, NetworkEndpoint)
+        assert config_node.value.endpoint.address == "192.168.0.1:8080"
+        assert config_node.value.timeout_seconds == 60
+        # Check mixed-in skip fields
+        assert isinstance(config_node.value, FeatureFlagsConfig)
+        assert config_node.value.feature_flags["validation"] is True
+        assert config_node.value.feature_flags["logging"] is False
+
+        # Cleanup
+        OmniConfig.clear_type_registry()
+
+    def test_registry_dataclass_factory(self):
+        """Test factory application with registry-based dataclass."""
+
+        from omniconfig import OmniConfig
+        from omniconfig.core.registry import RegistryMixin
+
+        # Define a custom class to register
+        class NetworkEndpoint:
+            def __init__(self, port: int):
+                self.address = f"192.168.0.1:{port}"
+
+            def to_port(self) -> int:
+                return int(self.address.split(":")[-1])
+
+            def __eq__(self, other):
+                return isinstance(other, NetworkEndpoint) and self.address == other.address
+
+        # Register the custom type
+        OmniConfig.register_type(
+            NetworkEndpoint,
+            type_hint=int,
+            factory=NetworkEndpoint,
+            reducer=lambda x: x.to_port(),
+        )
+
+        # Define FeatureFlagsConfig for optional fields
+        @dataclass
+        class FeatureFlagsConfig:
+            feature_flags: dict[str, bool] = field(default_factory=dict)
+
+        # Create a registry-based configuration
+        @dataclass
+        class BaseServiceConfig(RegistryMixin):
+            _REGISTRY_NAME_FIELD: ClassVar[str] = "service_type"
+            _REGISTRY_SUBREGISTRY_FIELD: ClassVar[str] = "environment"
+
+            name: str
+
+            @staticmethod
+            def from_dict(kwargs: Dict[str, Any]):
+                service_type = kwargs.pop(BaseServiceConfig._REGISTRY_NAME_FIELD, None)
+                environment = kwargs.pop(BaseServiceConfig._REGISTRY_SUBREGISTRY_FIELD, "")
+
+                if service_type:
+                    cls = BaseServiceConfig.retrieve(name=service_type, subregistry=environment)
+                    cls = cast(type[BaseServiceConfig], cls)
+                    # Support dynamic skip field mixing
+                    if "feature_flags" in kwargs:
+                        cls = dataclass(
+                            type(f"Feature{cls.__name__}", (FeatureFlagsConfig, cls), {}),
+                            kw_only=True,
+                        )
+                    return cls(**kwargs)
+                raise ValueError("Service type not specified")
+
+        # Register with OmniConfig
+        OmniConfig.register_type(
+            BaseServiceConfig,
+            type_hint=Dict,
+            factory=BaseServiceConfig.from_dict,
+            reducer=lambda x: {"service_type": type(x).__name__.replace("Feature", "")},
+        )
+
+        # Define and register a concrete implementation
+        @BaseServiceConfig.register(name="http")
+        @dataclass
+        class HttpServiceConfig(BaseServiceConfig):
+            endpoint: NetworkEndpoint
+            timeout_seconds: int = 30
+
+        # Build the node tree using ResolutionNode.build
+        data = {
+            "config": {
+                "service_type": "http",
+                "name": "server",
+                "endpoint": 8080,
+                "timeout_seconds": 60,
+                "feature_flags": {"validation": True, "logging": False},
+            }
+        }
+
+        # Build the tree
+        root = ResolutionNode.build(
+            data,
+            type_infos={("config",): OmniConfig.retrieve_type_info(BaseServiceConfig)},  # type: ignore
+        )
+
+        # Apply factory to the tree
+        FactorySystem.apply(root)
+
+        # Verify the results
+        assert root.is_factoried
+        assert isinstance(root.content, dict)
+        assert "config" in root.content
+
+        config_node = root.content["config"]
+        assert config_node.is_factoried
+        # The actual class will be SkipHttpServiceConfig
+        assert isinstance(config_node.value, HttpServiceConfig)
+        assert isinstance(config_node.value.name, str)
+        assert isinstance(config_node.value.endpoint, NetworkEndpoint)
+        assert config_node.value.name == "server"
+        assert config_node.value.endpoint.address == "192.168.0.1:8080"
+        assert config_node.value.timeout_seconds == 60
+        # Check mixed-in skip fields
+        assert isinstance(config_node.value, FeatureFlagsConfig)
+        assert config_node.value.feature_flags["validation"] is True
+        assert config_node.value.feature_flags["logging"] is False
+
+        # Cleanup
+        OmniConfig.clear_type_registry()
+
+
 class TestFactorySystemIntegration:
     """Integration tests for FactorySystem."""
 
@@ -588,28 +817,28 @@ class TestFactorySystemIntegration:
         # }
 
         # First config
-        c1_name = ResolutionNode(content="first", path=("root", "configs", 0, "name"))
-        c1_name.type_chains = [(TypeInfo(type_=str),)]
-        c1_value = ResolutionNode(content=10, path=("root", "configs", 0, "value"))
-        c1_value.type_chains = [(TypeInfo(type_=int),)]
+        c1_hostname = ResolutionNode(content="primary.db", path=("root", "configs", 0, "hostname"))
+        c1_hostname.type_chains = [(TypeInfo(type_=str),)]
+        c1_port = ResolutionNode(content=5432, path=("root", "configs", 0, "port"))
+        c1_port.type_chains = [(TypeInfo(type_=int),)]
         config1 = ResolutionNode(
-            content={"name": c1_name, "value": c1_value}, path=("root", "configs", 0)
+            content={"hostname": c1_hostname, "port": c1_port}, path=("root", "configs", 0)
         )
-        config1.type_chains = [(TypeInfo(type_=SimpleConfig),)]
+        config1.type_chains = [(TypeInfo(type_=DatabaseConfig),)]
 
         # Second config
-        c2_name = ResolutionNode(content="second", path=("root", "configs", 1, "name"))
-        c2_name.type_chains = [(TypeInfo(type_=str),)]
-        c2_value = ResolutionNode(content=20, path=("root", "configs", 1, "value"))
-        c2_value.type_chains = [(TypeInfo(type_=int),)]
+        c2_hostname = ResolutionNode(content="replica.db", path=("root", "configs", 1, "hostname"))
+        c2_hostname.type_chains = [(TypeInfo(type_=str),)]
+        c2_port = ResolutionNode(content=5433, path=("root", "configs", 1, "port"))
+        c2_port.type_chains = [(TypeInfo(type_=int),)]
         config2 = ResolutionNode(
-            content={"name": c2_name, "value": c2_value}, path=("root", "configs", 1)
+            content={"hostname": c2_hostname, "port": c2_port}, path=("root", "configs", 1)
         )
-        config2.type_chains = [(TypeInfo(type_=SimpleConfig),)]
+        config2.type_chains = [(TypeInfo(type_=DatabaseConfig),)]
 
         # Configs list
         configs = ResolutionNode(content=[config1, config2], path=("root", "configs"))
-        configs.type_chains = [(TypeInfo(type_=List[SimpleConfig]),)]
+        configs.type_chains = [(TypeInfo(type_=List[DatabaseConfig]),)]
 
         # Settings
         enabled = ResolutionNode(content="true", path=("root", "settings", "enabled"))
@@ -632,12 +861,12 @@ class TestFactorySystemIntegration:
         assert isinstance(root.value, dict)
         assert isinstance(root.value["configs"], list)
         assert len(root.value["configs"]) == 2
-        assert isinstance(root.value["configs"][0], SimpleConfig)
-        assert root.value["configs"][0].name == "first"
-        assert root.value["configs"][0].value == 10
-        assert isinstance(root.value["configs"][1], SimpleConfig)
-        assert root.value["configs"][1].name == "second"
-        assert root.value["configs"][1].value == 20
+        assert isinstance(root.value["configs"][0], DatabaseConfig)
+        assert root.value["configs"][0].hostname == "primary.db"
+        assert root.value["configs"][0].port == 5432
+        assert isinstance(root.value["configs"][1], DatabaseConfig)
+        assert root.value["configs"][1].hostname == "replica.db"
+        assert root.value["configs"][1].port == 5433
         assert isinstance(root.value["settings"], dict)
         assert root.value["settings"]["enabled"] is True
         assert root.value["settings"]["count"] == 5

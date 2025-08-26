@@ -36,3 +36,13 @@ def clear_type_registry():
     OmniConfig.clear_type_registry()
     yield
     OmniConfig.clear_type_registry()
+
+
+@pytest.fixture(autouse=True)
+def clear_registry():
+    """Clear the dataclass registry before each test."""
+    from omniconfig import OmniRegistry
+
+    OmniRegistry.clear_registry()
+    yield
+    OmniRegistry.clear_registry()
