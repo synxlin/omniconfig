@@ -8,7 +8,7 @@ from dataclasses import MISSING, is_dataclass
 from typing import Any, ClassVar, Dict, List, Optional, Tuple, Type
 
 from .core.exceptions import ConfigError
-from .core.reference import REFERENCE_SEPARATOR
+from .core.reference import translate_empty_scope_references
 from .core.types import _GLOBAL_TYPE_SYSTEM, TypeSystem
 from .core.utils import dumps_to_json, dumps_to_yaml
 from .namespace import OmniConfigNamespace
@@ -16,9 +16,8 @@ from .parsing.cli_parser import CLIParser
 from .parsing.file_loader import FileLoader
 from .parsing.merger import ConfigMerger
 from .resolution.node import ResolutionNode
+from .resolution.reducer import ReducerSystem
 from .resolution.state import ResolutionState
-
-DUAL_REFERENCE_SEPARATOR = REFERENCE_SEPARATOR + REFERENCE_SEPARATOR
 
 
 class OmniConfigParser:
@@ -265,7 +264,7 @@ class OmniConfigParser:
         # Step 8: Translate references for empty scope
         if "" in self._configs:
             self._logger.debug("Translating references for empty scope configuration")
-            universal_data = self._translate_empty_scope_references(universal_data)
+            universal_data = translate_empty_scope_references(universal_data)
 
         # Step 9: Apply factories, and resolve references
         self._logger.debug("Applying factories and resolve references iteratively")
@@ -292,7 +291,7 @@ class OmniConfigParser:
             if key not in self._configs:
                 unused_data[key] = value
         if "" in self._configs:
-            used_data = self._translate_empty_scope_references(used_data, recover=True).get("", {})
+            used_data = translate_empty_scope_references(used_data, recover=True).get("", {})
 
         return (
             config_namespace,
@@ -303,44 +302,8 @@ class OmniConfigParser:
             unknown_args,
         )
 
-    def _translate_empty_scope_references(self, data: Any, recover: bool = False) -> Any:
-        """Translate references for empty scope configuration.
-
-        When config has an empty scope, user references like "::field"
-        need to be translated to "::::field" internally to properly
-        reference the empty scope namespace.
-
-        Parameters
-        ----------
-        data : Any
-            The data structure to translate references in.
-
-        Returns
-        -------
-        Any
-            Data with translated references.
-        """
-        if isinstance(data, str):
-            if recover:
-                if data.startswith(DUAL_REFERENCE_SEPARATOR):
-                    return data[len(REFERENCE_SEPARATOR) :]
-            else:
-                if data.startswith(REFERENCE_SEPARATOR):
-                    if not data.startswith(DUAL_REFERENCE_SEPARATOR):
-                        return REFERENCE_SEPARATOR + data
-            return data
-        elif isinstance(data, dict):
-            return {
-                k: self._translate_empty_scope_references(v, recover=recover)
-                for k, v in data.items()
-            }
-        elif isinstance(data, list):
-            return [self._translate_empty_scope_references(item, recover=recover) for item in data]
-        else:
-            return data
-
     def _resolve_and_factory(self, data: Dict[str, Any]) -> ResolutionNode:
-        """Resolve references and apply factories iteratively.
+        """Resolve references and apply factories in topological order.
 
         Implements the two-phase iterative process from DESIGN.md using
         the new node-based architecture:
@@ -359,32 +322,13 @@ class OmniConfigParser:
         ResolutionNode
             The root node containing the final resolved data.
         """
-        # Initialize resolution state with dependency graph
-        # This will detect circular references immediately
-        self._logger.debug("Built dependency graph with topological sorting")
         state = ResolutionState(
             data=data,
             configs={scope: cls for scope, (cls, _) in self._configs.items()},
             type_system=self._type_system,
+            logger=self._logger,
         )
-
-        # Get the pre-computed resolution queue
-        queue = state.get_resolution_queue()
-
-        self._logger.debug(f"Processing {len(queue)} nodes in topological order")
-        # Single-pass processing in topological order
-        for node in queue:
-            if node.is_reference:
-                # Resolve reference
-                self._logger.debug(f"Processing {node.name} -> {node.reference}")
-                state.resolve_reference(node=node)
-            else:
-                # Apply factory
-                self._logger.debug(f"Processing factory application for {node.name}")
-                state.apply_factory(node=node)
-
-        # Return the root node which contains the final resolved data
-        return state.root
+        return state.resolve_and_factory().root
 
     def dump_defaults(self, path: Optional[str] = None) -> Dict[str, Any]:
         """Dump default values for all registered configs.
@@ -402,7 +346,7 @@ class OmniConfigParser:
         result = {}
 
         for scope, (cls, _) in self._configs.items():
-            defaults = self._type_system.serialize_defaults(cls)
+            defaults = ReducerSystem.apply_for_defaults(cls, type_system=self._type_system)
             if scope:
                 result[scope] = defaults
             else:

@@ -1,6 +1,5 @@
 """Type classification system for OmniConfig."""
 
-import enum
 import inspect
 from collections import OrderedDict, defaultdict
 from dataclasses import (
@@ -12,6 +11,7 @@ from dataclasses import (
     dataclass,
     is_dataclass,
 )
+from enum import Enum
 from types import MappingProxyType, NoneType, UnionType
 from typing import (
     Any,
@@ -60,7 +60,7 @@ _CONTAINER_TYPES = _LIST_CONTAINER_TYPES.union(_DICT_CONTAINER_TYPES)
 _T = TypeVar("_T")
 
 
-class TypeCategory(enum.Enum):
+class TypeCategory(Enum):
     """Type hint classification categories."""
 
     PRIMITIVE = "primitive"
@@ -85,7 +85,7 @@ def is_primitive_type(type_: Any) -> bool:
     """
     if type_ in _PRIMITIVE_TYPES:
         return True
-    if inspect.isclass(type_) and issubclass(type_, enum.Enum):
+    if inspect.isclass(type_) and issubclass(type_, Enum):
         return True
     return False
 
@@ -434,7 +434,9 @@ class TypeSystem:
         """
 
         def dfs(
-            type_hint: Any, chain: Tuple[TypeInfo, ...], chains: List[Tuple[TypeInfo, ...]]
+            type_hint: Any,
+            chain: Tuple[TypeInfo, ...],
+            chains: List[Tuple[TypeInfo, ...]],
         ) -> List[Tuple[TypeInfo, ...]]:
             category = self.classify(type_hint)
             if category == TypeCategory.CUSTOM:
@@ -454,7 +456,7 @@ class TypeSystem:
             return dfs(type_info.type_, chain=(), chains=[])
         return dfs(type_info.custom.type_hint, chain=(type_info,), chains=[])
 
-    def extract_container_element_type(
+    def extract_container_element_type(  # noqa: C901
         self, container_type: Optional[Any], key: Union[str, int]
     ) -> Any:
         """Extract element type from a container type hint.
@@ -519,7 +521,7 @@ class TypeSystem:
         # Handle typed containers
         elif origin in (list, List, set, Set, frozenset, FrozenSet):
             return args[0] if args else Any
-        elif origin in (dict, Dict):
+        elif origin in _DICT_CONTAINER_TYPES:
             # For dict, return value type
             return args[1] if len(args) > 1 else Any
         elif origin in (tuple, Tuple):
@@ -532,7 +534,9 @@ class TypeSystem:
                     if arg is not Ellipsis:
                         return arg
                     key -= 1
-            # If key is out of bounds, return Any
+            # If key is out of bounds
+            if args[-1] is Ellipsis and len(args) >= 2:
+                return args[-2]
             return Any
 
         # Not a container, return Any
@@ -646,97 +650,6 @@ class TypeSystem:
 
         return type_infos
 
-    def serialize(self, obj: Any, type_info: Optional[TypeInfo] = None) -> Any:
-        """Serialize an object.
-
-        Parameters
-        ----------
-        obj : Any
-            The object to serialize.
-        type_info : Optional[TypeInfo]
-            Optional type information for the object.
-
-        Returns
-        -------
-        Any
-            Serializable representation of the object.
-        """
-
-        if type_info and type_info.custom:
-            return self.serialize(type_info.custom.reducer(obj))
-
-        # Handle None
-        if obj is None:
-            return None
-
-        # Handle primitives
-        if isinstance(obj, (bool, int, float, str)):
-            return obj
-
-        if isinstance(obj, enum.Enum):
-            return obj.name
-
-        if obj is MISSING:
-            return "MISSING"
-
-        # Handle dataclass instances
-        if is_dataclass(obj):
-            result = {}
-            for field in self.scan(type(obj)).values():
-                if not field.init:
-                    continue
-                result[field.name] = self.serialize(
-                    getattr(obj, field.name), type_info=field.type_info
-                )
-            return result
-
-        # Handle containers
-        if isinstance(obj, (dict, MappingProxyType)):
-            return {k: self.serialize(v) for k, v in obj.items()}
-
-        if isinstance(obj, (list, tuple)):
-            return [self.serialize(item) for item in obj]
-
-        if isinstance(obj, (set, frozenset)):
-            return list(obj)
-
-        # Handle custom types with reducer
-        type_info = self.retrieve(type(obj))
-        if type_info and type_info.custom:
-            return self.serialize(type_info.custom.reducer(obj))
-
-        return obj
-
-    def serialize_defaults(self, cls: Type) -> Dict[str, Any]:
-        """Serialize default values for a dataclass.
-
-        Parameters
-        ----------
-        cls : Type
-            The dataclass type to serialize defaults for.
-
-        Returns
-        -------
-        Dict[str, Any]
-            Dictionary with field names and their default values.
-        """
-        defaults = {}
-        for field in self.scan(cls).values():
-            if field.default is not MISSING:
-                defaults[field.name] = self.serialize(field.default, type_info=field.type_info)
-            elif field.default_factory is not MISSING:
-                defaults[field.name] = self.serialize(
-                    field.default_factory(), type_info=field.type_info
-                )
-            else:
-                buckets = field.type_hint_buckets
-                if TypeCategory.DATACLASS in buckets and len(buckets[TypeCategory.DATACLASS]) == 1:
-                    nested_cls = next(iter(buckets[TypeCategory.DATACLASS]))
-                    defaults[field.name] = self.serialize_defaults(nested_cls)
-                else:
-                    defaults[field.name] = "MISSING"
-        return defaults
-
 
 # Global registry instance
 _GLOBAL_TYPE_SYSTEM = TypeSystem()
@@ -834,7 +747,7 @@ def try_prune_type_chains(  # noqa: C901
             if type_ is Any:
                 any_chains.append(chain)
                 continue
-            if issubclass(type_, enum.Enum):
+            if issubclass(type_, Enum):
                 # For enums, check if value is a member
                 if isinstance(value, type_) or value in type_:
                     matched_chains.append(chain)

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Factory system for node-based resolution.
 
 This module handles type transformation and factory application
@@ -146,12 +147,12 @@ class FactorySystem:
 
     @staticmethod
     def _apply_builtin_type(value: Any, target_type: Type, name: str) -> Any:  # noqa: C901
-        """Apply built-in type transformation.
+        """Apply built-in type factory.
 
         Parameters
         ----------
         value : Any
-            The value to transform.
+            The value to factory.
         target_type : Type
             The target type.
         name : str
@@ -160,18 +161,15 @@ class FactorySystem:
         Returns
         -------
         Any
-            The transformed value.
+            The factoried value.
         """
         # Handle None values
         if value is None:
             return None
 
         # Handle Any type - no transformation needed
-        if target_type is Any or target_type is type(Any):
+        if target_type is Any:
             return value
-
-        # Get origin for generic types
-        origin = get_origin(target_type)
 
         # Primitive types
         if target_type in (bool, int, float, str):
@@ -184,6 +182,9 @@ class FactorySystem:
         # Dataclass types
         if is_dataclass(target_type):
             return FactorySystem._create_dataclass(value, target_type, name)
+
+        # Get origin for generic types
+        origin = get_origin(target_type)
 
         # Container types
         if origin in (list, List) or target_type is list:

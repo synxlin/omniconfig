@@ -3,9 +3,21 @@
 
 from abc import ABCMeta
 from collections import defaultdict
-from collections.abc import Callable, Sequence
 from dataclasses import MISSING
-from typing import Any, TypeVar, overload
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    FrozenSet,
+    List,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    TypeVar,
+    Union,
+    overload,
+)
 
 __all__ = [
     "register_alias",
@@ -18,8 +30,9 @@ __all__ = [
 
 T = TypeVar("T")
 
-_GLOBAL_REGISTRY: dict[type, dict[str, dict[str, Any]]] = defaultdict(lambda: defaultdict(dict))
-_ALIAS_REGISTRY: dict[type, dict[str, dict[str, str]]] = defaultdict(lambda: defaultdict(dict))
+_VALUE_REGISTRY: Dict[type, Dict[str, Dict[str, Any]]] = defaultdict(lambda: defaultdict(dict))
+_ALIAS_REGISTRY: Dict[type, Dict[str, Dict[str, str]]] = defaultdict(lambda: defaultdict(dict))
+_KEY_REGISTRY: Dict[type, Dict[int, Set[Tuple[str, str]]]] = defaultdict(lambda: defaultdict(set))
 
 
 def _standardize_name(name: str) -> str:
@@ -39,18 +52,18 @@ def _standardize_name(name: str) -> str:
     return name.lower().replace("-", "_").replace(" ", "_")
 
 
-def _standardize_alias(alias: str | Sequence[str]) -> list[str]:
+def _standardize_alias(alias: Union[str, Sequence[str]]) -> List[str]:
     """Standardize a registry alias by converting it to lowercase
     and replacing spaces and hyphens.
 
     Parameters
     ----------
-    alias : str | Sequence[str]
+    alias : Union[str, Sequence[str]]
         The alias or aliases to standardize.
 
     Returns
     -------
-    list[str]
+    List[str]
         The standardized aliases.
         If `alias` is None or empty, returns an empty list.
     """
@@ -65,7 +78,7 @@ def register_alias(
     cls: type,
     name: str,
     *,
-    alias: str | Sequence[str],
+    alias: Union[str, Sequence[str]],
     subregistry: str = "",
     overwrite: bool = False,
 ) -> None:
@@ -77,7 +90,7 @@ def register_alias(
         The registry class.
     name : str
         The name of the value to register.
-    alias : str | Sequence[str]
+    alias : Union[str, Sequence[str]]
         Aliases for the registered value.
     subregistry : str, default: ""
         The subregistry to which the alias belongs.
@@ -96,7 +109,7 @@ def register_alias(
 
     name = _standardize_name(name)
     subregistry = _standardize_name(subregistry)
-    if name not in _GLOBAL_REGISTRY[cls][subregistry]:
+    if name not in _VALUE_REGISTRY[cls][subregistry]:
         raise ValueError(
             f"Cannot register alias for unregistered name '{name}'"
             f" in {cls.__name__} '{subregistry}' subregistry"
@@ -118,11 +131,11 @@ def register(
     value: Any,
     name: str = "",
     *,
-    alias: str | Sequence[str] = "",
+    alias: Union[str, Sequence[str]] = "",
     subregistry: str = "",
     as_fallback: bool = False,
-    subclass_only: bool | type = False,
-    instance_only: bool | type = False,
+    subclass_only: Union[bool, type] = False,
+    instance_only: Union[bool, type] = False,
     overwrite: bool = False,
 ) -> None:
     """Register a class or function in the global registry.
@@ -136,18 +149,18 @@ def register(
     name : str, default: ""
         The name of the value to register.
         If not provided, it will be derived from the value's `__name__`.
-    alias : str or Sequence[str], default: ""
+    alias : Union[str, Sequence[str]], default: ""
         Aliases for the registered value.
     subregistry : str, default: ""
         The subregistry to which the value belongs.
     as_fallback : bool, default: False
         If True, the value will be registered as the fallback value
         for the given registry class.
-    subclass_only : bool or type, default: False
+    subclass_only : Union[bool, type], default: False
         If True, the value must be a subclass of `cls`.
         If a type is provided, value must be a subclass of that type.
         If False, no subclass restriction is applied.
-    instance_only: bool | type = False
+    instance_only: Union[bool, type], default: False
         If True, the value must be an instance of `cls`.
         If a type is provided, value must be an instance of that type.
         If False, no instance restriction is applied.
@@ -174,9 +187,15 @@ def register(
         if not isinstance(value, instance_cls):
             raise TypeError(f"Value {value} is not an instance of {instance_cls.__name__}")
 
-    source = _GLOBAL_REGISTRY[cls][subregistry]
-    if overwrite or name not in source:
+    source = _VALUE_REGISTRY[cls][subregistry]
+    if overwrite and name in source:
+        orig = source[name]
         source[name] = value
+        _KEY_REGISTRY[cls][id(orig)].discard((subregistry, name))
+        _KEY_REGISTRY[cls][id(value)].add((subregistry, name))
+    elif name not in source:
+        source[name] = value
+        _KEY_REGISTRY[cls][id(value)].add((subregistry, name))
     else:
         registered_value = source[name]
         if registered_value is not value:
@@ -204,7 +223,7 @@ def register(
 
 def retrieve(
     cls: type, name: str, *, subregistry: str = "", fallback: bool = False, default: T = None
-) -> Any | T:
+) -> Union[Any, T]:
     """Retrieve a registered value from the global registry.
 
     Parameters
@@ -223,7 +242,7 @@ def retrieve(
 
     Returns
     -------
-    Any or T
+    Union[Any, T]
         The registered value if found, otherwise the default value.
     """
     name = _standardize_name(name)
@@ -235,14 +254,33 @@ def retrieve(
         key = alias_source[""]
     else:
         return default
-    return _GLOBAL_REGISTRY[cls][subregistry][key]
+    return _VALUE_REGISTRY[cls][subregistry][key]
+
+
+def identify(cls: type, value: Any) -> FrozenSet[Tuple[str, str]]:
+    """Identify the registry entry for a given value.
+
+    Parameters
+    ----------
+    cls : type
+        The registry class.
+    value : Any
+        The value to identify.
+
+    Returns
+    -------
+    FrozenSet[Tuple[str, str]]
+        A set of (name, subregistry) tuples for the registered value,
+        or an empty set if not found.
+    """
+    return frozenset(_KEY_REGISTRY[cls].get(id(value), set()))
 
 
 class RegistryMeta(type):
     _REGISTRY_NAME_FIELD: str
     _REGISTRY_SUBREGISTRY_FIELD: str
-    _REGISTRY_SUBCLASS_ONLY: dict[str, bool | type]
-    _REGISTRY_INSTANCE_ONLY: dict[str, bool | type]
+    _REGISTRY_SUBCLASS_ONLY: Dict[str, Union[bool, type]]
+    _REGISTRY_INSTANCE_ONLY: Dict[str, Union[bool, type]]
 
     def __new__(mcls, name, bases, namespace, /, **kwargs):
         cls = super().__new__(mcls, name, bases, namespace, **kwargs)
@@ -263,7 +301,7 @@ class RegistryMeta(type):
         /,
         *,
         name: str = "",
-        alias: str | Sequence[str] = "",
+        alias: Union[str, Sequence[str]] = "",
         subregistry: str = "",
         as_fallback: bool = False,
         overwrite: bool = False,
@@ -277,7 +315,7 @@ class RegistryMeta(type):
         name : str, default: ""
             The name of the value to register.
             If empty, it will be derived from the value's `__name__`.
-        alias : str or Sequence[str], default: ""
+        alias : Union[str, Sequence[str]], default: ""
             Aliases for the registered value.
         subregistry : str, default: ""
             The subregistry to which the value belongs.
@@ -295,7 +333,7 @@ class RegistryMeta(type):
         /,
         *,
         name: str = "",
-        alias: str | Sequence[str] = "",
+        alias: Union[str, Sequence[str]] = "",
         subregistry: str = "",
         as_fallback: bool = False,
         overwrite: bool = False,
@@ -307,7 +345,7 @@ class RegistryMeta(type):
         name : str, default: ""
             The name of the value to register.
             If empty, it will be derived from the value's `__name__`.
-        alias : str or Sequence[str], default: ""
+        alias : Union[str, Sequence[str]], default: ""
             Aliases for the registered value.
         subregistry : str, default: ""
             The subregistry to which the value belongs.
@@ -330,11 +368,11 @@ class RegistryMeta(type):
         /,
         *,
         name: str = "",
-        alias: str | Sequence[str] = "",
+        alias: Union[str, Sequence[str]] = "",
         subregistry: str = "",
         as_fallback: bool = False,
         overwrite: bool = False,
-    ) -> Callable | None:
+    ) -> Optional[Callable]:
         """Register a class or function to the base class registry.
 
         Parameters
@@ -345,7 +383,7 @@ class RegistryMeta(type):
         name : str, default: ""
             The name of the value to register.
             If empty, it will be derived from the value's `__name__`.
-        alias : str or Sequence[str], default: ""
+        alias : Union[str, Sequence[str]], default: ""
             Aliases for the registered value.
         subregistry : str, default: ""
             The subregistry from which to retrieve the value.
@@ -357,7 +395,7 @@ class RegistryMeta(type):
 
         Returns
         -------
-        Callable or None
+        Optional[Callable]
             If `value` is provided, returns None.
             Otherwise, returns a decorator that
             registers the decorated class or function.
@@ -395,7 +433,7 @@ class RegistryMeta(type):
 
     def retrieve(
         cls, name: str, *, subregistry: str = "", fallback: bool = False, default: T = None
-    ) -> Any | T:
+    ) -> Union[Any, T]:
         """Retrieve a registered value from the global registry.
 
         Parameters
@@ -412,16 +450,34 @@ class RegistryMeta(type):
 
         Returns
         -------
-        Any | T
+        Union[Any, T]
             The registered value if found, otherwise the default value.
         """
         return retrieve(cls, name, subregistry=subregistry, fallback=fallback, default=default)
+
+    def identify(cls: type, value: Any) -> FrozenSet[Tuple[str, str]]:
+        """Identify the registered name and subregistry for a value.
+
+        Parameters
+        ----------
+        cls : type
+            The registry class.
+        value : Any
+            The value to identify.
+
+        Returns
+        -------
+        FrozenSet[Tuple[str, str]]
+            A set of (name, subregistry) tuples for registered value,
+            or an empty set if not found.
+        """
+        return identify(cls, value)
 
     def register_alias(
         cls,
         name: str,
         *,
-        alias: str | Sequence[str],
+        alias: Union[str, Sequence[str]],
         subregistry: str = "",
         overwrite: bool = False,
     ) -> None:
@@ -433,7 +489,7 @@ class RegistryMeta(type):
             The registry class.
         name : str
             The name of the registered value.
-        alias : str or Sequence[str]
+        alias : Union[str, Sequence[str]]
             The alias or aliases to register.
         subregistry : str, default: ""
             The subregistry to which the alias belongs.

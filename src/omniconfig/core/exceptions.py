@@ -37,6 +37,12 @@ class ConfigFactoryError(ConfigError):
     pass
 
 
+class ConfigReducerError(ConfigError):
+    """Raised when configuration serialization fails."""
+
+    pass
+
+
 class TypeRegistrationError(ConfigError):
     """Raised when type registration conflicts occur."""
 

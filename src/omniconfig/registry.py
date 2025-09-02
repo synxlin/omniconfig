@@ -1,10 +1,17 @@
 """Type registry for custom types in OmniConfig."""
 
-from typing import Any, Callable, Sequence, Type, TypeVar, Union
+import json
+from dataclasses import is_dataclass
+from typing import Any, Callable, Optional, Sequence, Type, TypeVar, Union
 
-from .core.registry import _ALIAS_REGISTRY, _GLOBAL_REGISTRY, register, register_alias, retrieve
-from .core.types import _GLOBAL_TYPE_SYSTEM, TypeInfo
-from .namespace import OmniConfigNamespace
+import yaml
+
+from .core.reference import translate_empty_scope_references
+from .core.registry import _ALIAS_REGISTRY, _VALUE_REGISTRY, register, register_alias, retrieve
+from .core.types import _GLOBAL_TYPE_SYSTEM, TypeInfo, TypeSystem
+from .parsing.file_loader import FileLoader
+from .resolution.reducer import ReducerSystem
+from .resolution.state import ResolutionState
 
 __all__ = ["OmniConfig", "OmniRegistry"]
 
@@ -21,6 +28,7 @@ class OmniConfig:
         type_hint: Any,
         factory: Callable[[Any], Any],
         reducer: Callable[[Any], Any],
+        type_system: TypeSystem = _GLOBAL_TYPE_SYSTEM,
     ) -> None:
         """Register a custom type globally.
 
@@ -35,10 +43,10 @@ class OmniConfig:
         reducer : Callable[[Any], Any]
             Function to convert from type_ to type_hint.
         """
-        _GLOBAL_TYPE_SYSTEM.register(type_, type_hint, factory, reducer)
+        type_system.register(type_, type_hint, factory, reducer)
 
     @staticmethod
-    def is_type_registered(type_: Type) -> bool:
+    def is_type_registered(type_: Type, type_system: TypeSystem = _GLOBAL_TYPE_SYSTEM) -> bool:
         """Check if a type is registered globally.
 
         Parameters
@@ -51,10 +59,12 @@ class OmniConfig:
         bool
             True if the type is registered.
         """
-        return _GLOBAL_TYPE_SYSTEM.is_registered(type_)
+        return type_system.is_registered(type_)
 
     @staticmethod
-    def retrieve_type_info(type_: Any, default: T = None) -> Union[TypeInfo, T]:
+    def retrieve_type_info(
+        type_: Any, default: T = None, type_system: TypeSystem = _GLOBAL_TYPE_SYSTEM
+    ) -> Union[TypeInfo, T]:
         """Get registered information for a type.
 
         Parameters
@@ -69,24 +79,105 @@ class OmniConfig:
         Union[TypeInfo, T]
             Type information if registered, or default value.
         """
-        return _GLOBAL_TYPE_SYSTEM.retrieve(type_, default=default)
+        return type_system.retrieve(type_, default=default)
 
     @staticmethod
-    def clear_type_registry() -> None:
+    def clear_type_registry(type_system: TypeSystem = _GLOBAL_TYPE_SYSTEM) -> None:
         """Clear all registered types."""
-        _GLOBAL_TYPE_SYSTEM.clear()
+        type_system.clear()
 
     @staticmethod
-    def serialize(obj: Any) -> Any:
-        """Serialize an object."""
-        if isinstance(obj, OmniConfigNamespace):
-            results = {}
-            for scope, value in obj.__dict__.items():
-                results[scope] = _GLOBAL_TYPE_SYSTEM.serialize(value)
-            if "" in obj.__dict__:
-                results = results[""]
-            return results
-        return _GLOBAL_TYPE_SYSTEM.serialize(obj)
+    def serialize(
+        obj: Any, datacls: Optional[type[T]] = None, type_system: TypeSystem = _GLOBAL_TYPE_SYSTEM
+    ) -> Any:
+        """Serialize an dataclass instance.
+
+        Parameters
+        ----------
+        obj : Any
+            The object to serialize.
+        datacls : Optional[type[T]]
+            The dataclass type to use for serialization.
+
+        Returns
+        -------
+        Any
+            The serialized object.
+        """
+        if datacls is None:
+            if not is_dataclass(obj) or isinstance(obj, type):
+                raise TypeError("Invalid dataclass instance")
+            return ReducerSystem.apply(obj, type_system=type_system)
+        else:
+            if not isinstance(datacls, type) or not is_dataclass(datacls):
+                raise TypeError("Invalid dataclass type")
+            if not isinstance(obj, datacls):
+                raise TypeError("Invalid dataclass instance")
+            return ReducerSystem.apply(
+                obj, type_info=type_system.retrieve(datacls, None), type_system=type_system
+            )
+
+    @staticmethod
+    def deserialize(
+        datacls: type[T],
+        /,
+        data: Union[str, dict[str, Any]],
+        type_system: TypeSystem = _GLOBAL_TYPE_SYSTEM,
+    ) -> T:
+        """Create an instance of a dataclass from a data dictionary.
+
+        Parameters
+        ----------
+        datacls : type[T]
+            The dataclass type to instantiate.
+        data : Union[str, dict[str, Any]]
+            The data to use for instantiation,
+            either as a JSON/YAML string
+            or a dictionary parsed from such a string.
+
+        Returns
+        -------
+        T
+            An instance of the dataclass.
+        """
+        if not isinstance(datacls, type) or not is_dataclass(datacls):
+            raise TypeError("Invalid dataclass type")
+        if isinstance(data, str):
+            try:
+                data = FileLoader().load_file(data)
+            except Exception:
+                try:
+                    data = json.loads(data)
+                except json.JSONDecodeError:
+                    try:
+                        data = yaml.safe_load(data)
+                    except yaml.YAMLError:
+                        raise ValueError("Invalid YAML or JSON data string") from None
+        if not isinstance(data, dict):
+            raise ValueError("Invalid data format")
+        data = translate_empty_scope_references(data)
+        state = ResolutionState(data={"": data}, configs={"": datacls}, type_system=type_system)
+        node = state.resolve_and_factory().root
+        assert isinstance(node.content, dict)
+        return node.content[""].value
+
+    @staticmethod
+    def serialize_defaults(datacls: type[T], type_system: TypeSystem = _GLOBAL_TYPE_SYSTEM) -> Any:
+        """Serialize default values for a dataclass.
+
+        Parameters
+        ----------
+        datacls : type[T]
+            The dataclass type to serialize defaults for.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Dictionary with field names and their default values.
+        """
+        if not isinstance(datacls, type) or not is_dataclass(datacls):
+            raise TypeError("Invalid dataclass type")
+        return ReducerSystem.apply_for_defaults(datacls, type_system=type_system)
 
 
 class OmniRegistry:
@@ -143,5 +234,5 @@ class OmniRegistry:
     @staticmethod
     def clear_registry() -> None:
         """Clear all registered dataclasses."""
-        _GLOBAL_REGISTRY.clear()
+        _VALUE_REGISTRY.clear()
         _ALIAS_REGISTRY.clear()

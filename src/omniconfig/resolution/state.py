@@ -4,7 +4,8 @@ This module provides the central state manager for the resolution
 using the dependency graph with topological sorting.
 """
 
-from typing import Any, Dict, List, Type
+import logging
+from typing import Any, Dict, List, Optional, Self, Type
 
 from ..core.types import _GLOBAL_TYPE_SYSTEM, TypeInfo, TypeSystem
 from .dependency import DependencyGraph
@@ -33,6 +34,7 @@ class ResolutionState:
         data: Dict[str, Any],
         configs: Dict[str, Type],
         type_system: TypeSystem = _GLOBAL_TYPE_SYSTEM,
+        logger: Optional[logging.Logger] = None,
     ):
         """Initialize resolution state with optimized dependency graph.
 
@@ -54,6 +56,7 @@ class ResolutionState:
             type_system.scan(config)
         self._configs = configs
         self._type_system = type_system
+        self._logger = logger or logging.getLogger(__name__)
 
         # Build complete type hints from registered configs
         self._type_infos = {}
@@ -68,6 +71,7 @@ class ResolutionState:
 
         # Build dependency graph with topological sorting
         # This will raise CircularReferenceError if cycles are detected
+        self._logger.debug("Built dependency graph with topological sorting")
         self.graph = DependencyGraph(self.root)
 
     def get_resolution_queue(self) -> List[ResolutionNode]:
@@ -102,3 +106,25 @@ class ResolutionState:
         resolved_node = node.resolve_reference(target_node=self.graph.nodes[node.reference])
         self.apply_factory(node=resolved_node)
         self.graph.set_node(path=path, node=resolved_node)
+
+    def resolve_and_factory(self) -> Self:
+        """Resolve references and apply factories.
+
+        Returns
+        -------
+        Self
+            The current instance for method chaining.
+        """
+        queue = self.get_resolution_queue()
+        self._logger.debug(f"Processing {len(queue)} nodes in topological order")
+        # Single-pass processing in topological order
+        for node in queue:
+            if node.is_reference:
+                # Resolve reference
+                self._logger.debug(f"Processing {node.name} -> {node.reference}")
+                self.resolve_reference(node=node)
+            else:
+                # Apply factory
+                self._logger.debug(f"Processing factory application for {node.name}")
+                self.apply_factory(node=node)
+        return self
